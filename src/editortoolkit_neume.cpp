@@ -797,7 +797,7 @@ bool EditorToolkitNeume::Drag(std::string elementId, int x, int y, bool topLevel
             }
         }
         if (!updated) note->m_unsupported.push_back(std::make_pair("schenker:x", xStr));
-        note->SetDrawingFreeX(static_cast<int>(std::lround(schenkerX * DEFINITION_FACTOR)));
+        note->SetDrawingFreeXFromGraphical(schenkerX);
 
         // Update discrete loc from vertical drag (y is Neon-sent, up positive)
         Staff *staff = dynamic_cast<Staff *>(note->GetFirstAncestor(STAFF));

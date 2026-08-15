@@ -40,12 +40,12 @@ Note *EditorToolkit::CreateSchenkerNote(Layer *layer, int loc, double schenkerX)
 
     const std::string xStr = std::to_string(schenkerX);
     note->m_unsupported.push_back(std::make_pair("schenker:x", xStr));
-    note->SetDrawingFreeX(static_cast<int>(std::lround(schenkerX * DEFINITION_FACTOR)));
 
     if (!layer->AddChild(note)) {
         delete note;
         return NULL;
     }
+    note->SetDrawingFreeXFromGraphical(schenkerX);
     return note;
 }
 

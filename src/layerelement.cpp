@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cassert>
 #include <climits>
+#include <cmath>
 #include <iterator>
 #include <math.h>
 #include <numeric>
@@ -393,6 +394,23 @@ void LayerElement::SetDrawingFreeX(int drawingFreeX)
     this->ResetCachedDrawingX();
 }
 
+void LayerElement::SetDrawingFreeXFromGraphical(double graphicalX)
+{
+    int drawingX = static_cast<int>(std::lround(graphicalX * DEFINITION_FACTOR));
+    const Page *page = vrv_cast<const Page *>(this->GetFirstAncestor(PAGE));
+    if (!page) {
+        const Doc *doc = vrv_cast<const Doc *>(this->GetFirstAncestor(DOC));
+        if (doc) page = doc->GetDrawingPage();
+    }
+    if (page) {
+        const double ppu = page->GetPPUFactor();
+        if ((ppu != 0.0) && (ppu != 1.0)) {
+            drawingX = static_cast<int>(std::lround(drawingX / ppu));
+        }
+    }
+    this->SetDrawingFreeX(drawingX);
+}
+
 void LayerElement::ResetDrawingFreeX()
 {
     m_drawingFreeX = VRV_UNSET;
@@ -677,6 +695,10 @@ int LayerElement::GetDrawingRadius(const Doc *doc, bool isInLigature) const
 Fraction LayerElement::GetAlignmentDuration(
     const AlignMeterParams &params, bool notGraceOnly, data_NOTATIONTYPE notationType) const
 {
+    if (this->IsSchenker()) {
+        return Fraction(0);
+    }
+
     if (this->IsGraceNote() && notGraceOnly) {
         return Fraction(0);
     }

@@ -9,7 +9,12 @@
 
 //----------------------------------------------------------------------------
 
+#include <cmath>
+
+//----------------------------------------------------------------------------
+
 #include "layer.h"
+#include "layerelement.h"
 #include "page.h"
 #include "staff.h"
 #include "surface.h"
@@ -38,6 +43,10 @@ FunctorCode ApplyPPUFactorFunctor::VisitLayerElement(LayerElement *layerElement)
 
     if (layerElement->m_drawingFacsX != VRV_UNSET) layerElement->m_drawingFacsX /= m_page->GetPPUFactor();
     if (layerElement->m_drawingFacsY != VRV_UNSET) layerElement->m_drawingFacsY /= m_page->GetPPUFactor();
+    if (layerElement->HasDrawingFreeX()) {
+        layerElement->SetDrawingFreeX(
+            static_cast<int>(std::lround(layerElement->GetDrawingFreeX() / m_page->GetPPUFactor())));
+    }
 
     return FUNCTOR_CONTINUE;
 }
@@ -127,6 +136,9 @@ FunctorCode GetAlignmentLeftRightFunctor::VisitObject(const Object *object)
     if (!object->HasSelfBB() || object->HasEmptyBB()) return FUNCTOR_CONTINUE;
 
     if (object->Is(m_excludeClasses)) return FUNCTOR_CONTINUE;
+
+    const LayerElement *layerElement = vrv_cast<const LayerElement *>(object);
+    if (layerElement && layerElement->IsSchenker()) return FUNCTOR_CONTINUE;
 
     m_minLeft = std::min(m_minLeft, object->GetSelfLeft());
     m_maxRight = std::max(m_maxRight, object->GetSelfRight());

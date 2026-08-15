@@ -86,6 +86,14 @@ public:
     virtual bool HasToBeAligned() const { return false; }
 
     /**
+     * Stage 1 Schenker analytical notes: drawn via Note, but excluded from CMN rhythmic spacing.
+     */
+    bool IsSchenker() const
+    {
+        return this->Is(NOTE) && this->HasType() && (this->GetType() == "schenker");
+    }
+
+    /**
      * Return true if the element is part of a scoreDef or staffDef
      */
     virtual bool IsScoreDefElement() const { return false; }
@@ -193,6 +201,12 @@ public:
     ///@{
     int GetDrawingFreeX() const { return m_drawingFreeX; }
     void SetDrawingFreeX(int drawingFreeX);
+    /**
+     * Convert a MEI/facsimile-space schenker:x into the current drawing space.
+     * After Neon facsimile PPU has been applied, that space matches the original
+     * graphical units rather than DEFINITION_FACTOR logical units.
+     */
+    void SetDrawingFreeXFromGraphical(double graphicalX);
     bool HasDrawingFreeX() const { return (m_drawingFreeX != VRV_UNSET); }
     void ResetDrawingFreeX();
     ///@}

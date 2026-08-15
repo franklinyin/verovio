@@ -640,6 +640,9 @@ bool EditorToolkitShared::InsertSchenkerNote(const std::string &staffId, int loc
     }
 
     layer->ReorderByXPos();
+    if (Page *page = m_doc->GetDrawingPage()) {
+        page->LayOutTranscription(true);
+    }
     this->SetEditInfo();
     m_editInfo.import("uuid", note->GetID());
     m_editInfo.import("status", "OK");

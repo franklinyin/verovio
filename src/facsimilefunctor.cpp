@@ -46,6 +46,9 @@ FunctorCode SyncFromFacsimileFunctor::VisitLayerElement(LayerElement *layerEleme
     if (!layerElement->Is({ ACCID, BARLINE, CHORD, CLEF, CUSTOS, DIVLINE, DOT, LIQUESCENT, NC, NOTE, REST, SYL }))
         return FUNCTOR_CONTINUE;
 
+    // Schenker notes (and any other unzoned events) use free-X / @loc, not facsimile zones.
+    if (!layerElement->HasFacs()) return FUNCTOR_CONTINUE;
+
     Zone *zone = layerElement->GetZone();
     assert(zone);
     layerElement->m_drawingFacsX = m_view.ToLogicalX(zone->GetUlx() * DEFINITION_FACTOR - m_pageMarginLeft);

@@ -220,6 +220,16 @@ const RunningElement *Page::GetFooter() const
 
 void Page::LayOut()
 {
+    Doc *doc = vrv_cast<Doc *>(this->GetFirstAncestor(DOC));
+    assert(doc);
+
+    // Facsimile-backed Neon / transcription documents must not run free CMN
+    // engraving (justification, rhythmic spacing, page-content width).
+    if (doc->IsTranscription() || doc->IsFacs()) {
+        this->LayOutTranscription();
+        return;
+    }
+
     if (m_layoutDone) {
         // We only need to reset the header - this will adjust the page number if necessary
         if (this->GetHeader()) this->GetHeader()->SetDrawingPage(this);
@@ -232,8 +242,6 @@ void Page::LayOut()
     this->LayOutVertically();
     this->JustifyVertically();
 
-    Doc *doc = vrv_cast<Doc *>(this->GetFirstAncestor(DOC));
-    assert(doc);
     if (doc->GetOptions()->m_svgBoundingBoxes.GetValue()) {
         View view;
         view.SetDoc(doc);

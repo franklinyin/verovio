@@ -150,6 +150,14 @@ FunctorCode AlignHorizontallyFunctor::VisitLayerElement(LayerElement *layerEleme
 
     layerElement->SetScoreDefRole(m_scoreDefRole);
 
+    // Analytical Schenker notes keep a dummy alignment pointer but must not
+    // reserve rhythmic time, contribute to measure/system spacing, or register
+    // stem/flag children in the alignment.
+    if (layerElement->IsSchenker()) {
+        layerElement->SetAlignment(m_measureAligner->GetAlignmentAtTime(m_time, ALIGNMENT_DEFAULT));
+        return FUNCTOR_SIBLINGS;
+    }
+
     AlignmentType type = ALIGNMENT_DEFAULT;
 
     Chord *chordParent = vrv_cast<Chord *>(layerElement->GetFirstAncestor(CHORD, MAX_CHORD_DEPTH));

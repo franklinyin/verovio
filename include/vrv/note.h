@@ -105,7 +105,7 @@ public:
      * Override the method since alignment is required.
      * For notes we want not to align notes within a ligature (except first and last)
      */
-    bool HasToBeAligned() const override { return true; }
+    bool HasToBeAligned() const override { return !this->IsSchenker(); }
 
     /**
      * Add an element (a verse or an accid) to a note.
