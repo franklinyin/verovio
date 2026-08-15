@@ -10,6 +10,7 @@
 //----------------------------------------------------------------------------
 
 #include <cassert>
+#include <cmath>
 #include <iostream>
 #include <regex>
 #include <string>
@@ -6836,14 +6837,18 @@ bool MEIInput::ReadLayerElement(pugi::xml_node element, LayerElement *object)
         object->m_drawingFacsX = object->GetCoordX1() * DEFINITION_FACTOR;
     }
 
-    // Stage 0 smoke test: type="schenker" + @label as Verovio drawing-unit free-X.
+    // Stage 0/1: type="schenker" + schenker:x (Neon graphical units) → free drawing X.
     // Y stays staff-relative via @loc / PositionInterface. Not a permanent MEI encoding.
-    if (object->HasType() && (object->GetType() == "schenker") && object->HasLabel()) {
-        try {
-            object->SetDrawingFreeX(std::stoi(object->GetLabel()));
-        }
-        catch (const std::exception &) {
-            LogWarning("Schenker note '%s' has non-integer @label; free-X ignored", object->GetID().c_str());
+    if (object->HasType() && (object->GetType() == "schenker")) {
+        pugi::xml_attribute schenkerX = element.attribute("schenker:x");
+        if (schenkerX) {
+            try {
+                const double xGraphical = std::stod(schenkerX.value());
+                object->SetDrawingFreeX(static_cast<int>(std::lround(xGraphical * DEFINITION_FACTOR)));
+            }
+            catch (const std::exception &) {
+                LogWarning("Schenker element '%s' has invalid schenker:x; free-X ignored", object->GetID().c_str());
+            }
         }
     }
 

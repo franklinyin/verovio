@@ -10,11 +10,13 @@
 //--------------------------------------------------------------------------------
 
 #include <algorithm>
+#include <cmath>
 #include <iterator>
 #include <limits>
 #include <locale>
 #include <math.h>
 #include <set>
+#include <string>
 
 //--------------------------------------------------------------------------------
 
@@ -28,6 +30,7 @@
 #include "measure.h"
 #include "nc.h"
 #include "neume.h"
+#include "note.h"
 #include "oriscus.h"
 #include "page.h"
 #include "quilisma.h"
@@ -748,6 +751,67 @@ bool EditorToolkitNeume::Drag(std::string elementId, int x, int y, bool topLevel
             zone->ShiftByXY(x, -y);
         }
     }
+    else if (element->Is(NOTE)) {
+        Note *note = vrv_cast<Note *>(element);
+        assert(note);
+        if (note->GetType() != "schenker") {
+            LogError("Only type=\"schenker\" notes support dragging");
+            m_editInfo.import("status", "FAILURE");
+            m_editInfo.import("message", "Only type=\"schenker\" notes support dragging.");
+            return false;
+        }
+
+        // Update continuous x (Neon graphical units stored in schenker:x)
+        double schenkerX = 0.0;
+        bool hasSchenkerX = false;
+        for (auto &pair : note->m_unsupported) {
+            if (pair.first == "schenker:x") {
+                try {
+                    schenkerX = std::stod(pair.second);
+                    hasSchenkerX = true;
+                }
+                catch (const std::exception &) {
+                }
+                break;
+            }
+        }
+        if (!hasSchenkerX && note->HasDrawingFreeX()) {
+            schenkerX = static_cast<double>(note->GetDrawingFreeX()) / DEFINITION_FACTOR;
+            hasSchenkerX = true;
+        }
+        if (!hasSchenkerX) {
+            LogError("Schenker note '%s' has no schenker:x", note->GetID().c_str());
+            m_editInfo.import("status", "FAILURE");
+            m_editInfo.import("message", "Schenker note has no schenker:x.");
+            return false;
+        }
+
+        schenkerX += x;
+        const std::string xStr = std::to_string(schenkerX);
+        bool updated = false;
+        for (auto &pair : note->m_unsupported) {
+            if (pair.first == "schenker:x") {
+                pair.second = xStr;
+                updated = true;
+                break;
+            }
+        }
+        if (!updated) note->m_unsupported.push_back(std::make_pair("schenker:x", xStr));
+        note->SetDrawingFreeX(static_cast<int>(std::lround(schenkerX * DEFINITION_FACTOR)));
+
+        // Update discrete loc from vertical drag (y is Neon-sent, up positive)
+        Staff *staff = dynamic_cast<Staff *>(note->GetFirstAncestor(STAFF));
+        if (staff && staff->GetZone() && staff->m_drawingLines > 1) {
+            Zone *staffZone = staff->GetZone();
+            const int staffHeight = staffZone->GetLry() - staffZone->GetUly();
+            const int halfSpace = staffHeight / ((staff->m_drawingLines - 1) * 2);
+            if (halfSpace != 0) {
+                const int locDelta = static_cast<int>(std::lround(static_cast<double>(y) / halfSpace));
+                const int newLoc = (note->HasLoc() ? note->GetLoc() : 0) + locDelta;
+                note->SetLoc(newLoc);
+            }
+        }
+    }
     else if (element->Is(DIVLINE)) {
         DivLine *divLine = dynamic_cast<DivLine *>(element);
         if (!divLine->HasFacs()) {
@@ -1292,6 +1356,61 @@ bool EditorToolkitNeume::Insert(std::string elementType, std::string staffId, in
         layer->ReorderByXPos();
 
         m_editInfo.import("uuid", divLine->GetID());
+    }
+    else if (elementType == "note") {
+        // Stage 1 structural / Schenker note: free-X + discrete @loc (no facsimile zone)
+        bool isSchenker = false;
+        int loc = 0;
+        bool hasLoc = false;
+        double schenkerX = ulx;
+
+        for (auto it = attributes.begin(); it != attributes.end(); ++it) {
+            if (it->first == "type" && it->second == "schenker") {
+                isSchenker = true;
+            }
+            else if (it->first == "loc") {
+                try {
+                    loc = std::stoi(it->second);
+                    hasLoc = true;
+                }
+                catch (const std::exception &) {
+                    LogWarning("Invalid loc '%s' for structural note", it->second.c_str());
+                }
+            }
+            else if (it->first == "schenker:x") {
+                try {
+                    schenkerX = std::stod(it->second);
+                }
+                catch (const std::exception &) {
+                    LogWarning("Invalid schenker:x '%s' for structural note", it->second.c_str());
+                }
+            }
+        }
+
+        if (!isSchenker) {
+            delete zone;
+            LogError("Only type=\"schenker\" notes are supported for insertion");
+            m_editInfo.import("status", "FAILURE");
+            m_editInfo.import("message", "Only type=\"schenker\" notes are supported for insertion.");
+            return false;
+        }
+
+        delete zone;
+        zone = NULL;
+
+        Note *note = new Note();
+        note->SetType("schenker");
+        if (hasLoc) note->SetLoc(loc);
+        note->SetDur(DURATION_1);
+        note->SetStemVisible(BOOLEAN_false);
+
+        const std::string xStr = std::to_string(schenkerX);
+        note->m_unsupported.push_back(std::make_pair("schenker:x", xStr));
+        note->SetDrawingFreeX(static_cast<int>(std::lround(schenkerX * DEFINITION_FACTOR)));
+
+        layer->AddChild(note);
+
+        m_editInfo.import("uuid", note->GetID());
     }
     else {
         delete zone;
