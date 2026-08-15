@@ -179,7 +179,7 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
                 this->PrepareUndo();
                 return this->InsertSchenkerNote(staffId, loc, schenkerX);
             }
-            LogWarning("Could not parse the insert action");
+            LogWarning("Could not parse the Schenker insert action: %s", param.json().c_str());
         }
         else {
             std::string elementName, elementId, insertMode;
@@ -322,8 +322,10 @@ bool EditorToolkitShared::ParseSchenkerNoteInsertAction(
     if (param.get<jsonxx::String>("elementType") != "note") return false;
     if (!param.has<jsonxx::String>("staffId")) return false;
     staffId = param.get<jsonxx::String>("staffId");
-    if (!param.has<jsonxx::Number>("ulx")) return false;
-    if (!param.has<jsonxx::Number>("uly")) return false;
+    // ulx/uly are required by the Neon payload for API compatibility, but may
+    // arrive as number or numeric string. They are not the stored position.
+    if (!(param.has<jsonxx::Number>("ulx") || param.has<jsonxx::String>("ulx"))) return false;
+    if (!(param.has<jsonxx::Number>("uly") || param.has<jsonxx::String>("uly"))) return false;
     if (!param.has<jsonxx::Object>("attributes")) return false;
 
     jsonxx::Object attributes = param.get<jsonxx::Object>("attributes");
