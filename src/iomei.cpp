@@ -12,6 +12,7 @@
 #include <cassert>
 #include <iostream>
 #include <regex>
+#include <string>
 
 //----------------------------------------------------------------------------
 
@@ -6833,6 +6834,17 @@ bool MEIInput::ReadLayerElement(pugi::xml_node element, LayerElement *object)
     if (element.attribute("coord.x1") && m_doc->IsTranscription()) {
         object->ReadCoordX1(element);
         object->m_drawingFacsX = object->GetCoordX1() * DEFINITION_FACTOR;
+    }
+
+    // Stage 0 smoke test: type="schenker" + @label as Verovio drawing-unit free-X.
+    // Y stays staff-relative via @loc / PositionInterface. Not a permanent MEI encoding.
+    if (object->HasType() && (object->GetType() == "schenker") && object->HasLabel()) {
+        try {
+            object->SetDrawingFreeX(std::stoi(object->GetLabel()));
+        }
+        catch (const std::exception &) {
+            LogWarning("Schenker note '%s' has non-integer @label; free-X ignored", object->GetID().c_str());
+        }
     }
 
     return true;

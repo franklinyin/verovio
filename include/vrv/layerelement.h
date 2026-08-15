@@ -187,6 +187,17 @@ public:
     ///@}
 
     /**
+     * @name Absolute free-X drawing position (bypasses rhythmic Alignment).
+     * Used for Schenkerian / freely positioned notes. Y remains staff-relative via @loc.
+     */
+    ///@{
+    int GetDrawingFreeX() const { return m_drawingFreeX; }
+    void SetDrawingFreeX(int drawingFreeX);
+    bool HasDrawingFreeX() const { return (m_drawingFreeX != VRV_UNSET); }
+    void ResetDrawingFreeX();
+    ///@}
+
+    /**
      * Adjust the m_drawingYRel for the element to be centered on the inner content of the measure
      */
     void CenterDrawingX();
@@ -443,6 +454,12 @@ private:
 
     // flag to indicate that layerElement belongs to the beamSpan
     bool m_isInBeamspan;
+
+    /**
+     * Absolute drawing X that bypasses measure + rhythmic Alignment.
+     * When set (not VRV_UNSET), GetDrawingX() returns this value directly.
+     */
+    int m_drawingFreeX;
 };
 
 } // namespace vrv

@@ -119,6 +119,7 @@ void LayerElement::Reset()
     this->ResetTyped();
 
     m_drawingFacsX = VRV_UNSET;
+    m_drawingFreeX = VRV_UNSET;
     m_drawingYRel = 0;
     m_drawingFacsY = VRV_UNSET;
     m_drawingXRel = 0;
@@ -386,8 +387,22 @@ void LayerElement::SetGraceAlignment(Alignment *graceAlignment)
     m_graceAlignment = graceAlignment;
 }
 
+void LayerElement::SetDrawingFreeX(int drawingFreeX)
+{
+    m_drawingFreeX = drawingFreeX;
+    this->ResetCachedDrawingX();
+}
+
+void LayerElement::ResetDrawingFreeX()
+{
+    m_drawingFreeX = VRV_UNSET;
+    this->ResetCachedDrawingX();
+}
+
 int LayerElement::GetDrawingX() const
 {
+    // Absolute free-X bypasses measure + rhythmic Alignment (e.g. Schenkerian notes)
+    if (m_drawingFreeX != VRV_UNSET) return m_drawingFreeX;
 
     // Since m_drawingFacsX is the left position, we adjust the XRel accordingly in AdjustXRelForTranscription
     if (m_drawingFacsX != VRV_UNSET) return m_drawingFacsX + this->GetDrawingXRel();
@@ -511,6 +526,7 @@ void LayerElement::CacheYRel(bool restore)
 void LayerElement::CenterDrawingX()
 {
     if (m_drawingFacsX != VRV_UNSET) return;
+    if (m_drawingFreeX != VRV_UNSET) return;
 
     this->SetDrawingXRel(0);
 
