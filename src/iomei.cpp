@@ -308,6 +308,8 @@ std::string MEIOutput::Export()
 
         m_mei = meiDoc.append_child("mei");
         m_mei.append_attribute("xmlns") = "http://www.music-encoding.org/ns/mei";
+        // Stage 1 prototype: ensure schenker:x and related attrs remain valid namespaced XML
+        m_mei.append_attribute("xmlns:schenker") = "https://example.org/schenker";
         AttConverter converter;
         meiVersion_MEIVERSION meiVersion = MEI_CURRENT_VERSION;
         if (this->GetBasic()) meiVersion = MEI_CURRENT_BASIC_VERSION;
