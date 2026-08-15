@@ -9,6 +9,13 @@
 
 //--------------------------------------------------------------------------------
 
+#include <cmath>
+#include <string>
+
+//--------------------------------------------------------------------------------
+
+#include "layer.h"
+#include "note.h"
 #include "object.h"
 #include "page.h"
 #include "vrv.h"
@@ -20,6 +27,27 @@ namespace vrv {
 #ifndef NO_EDIT_SUPPORT
 
 #define CHAINED_ID "[chained-id]"
+
+Note *EditorToolkit::CreateSchenkerNote(Layer *layer, int loc, double schenkerX)
+{
+    if (!layer) return NULL;
+
+    Note *note = new Note();
+    note->SetType("schenker");
+    note->SetLoc(loc);
+    note->SetDur(DURATION_1);
+    note->SetStemVisible(BOOLEAN_false);
+
+    const std::string xStr = std::to_string(schenkerX);
+    note->m_unsupported.push_back(std::make_pair("schenker:x", xStr));
+    note->SetDrawingFreeX(static_cast<int>(std::lround(schenkerX * DEFINITION_FACTOR)));
+
+    if (!layer->AddChild(note)) {
+        delete note;
+        return NULL;
+    }
+    return note;
+}
 
 bool EditorToolkit::AppendChild(std::string &elementId, const std::string &elementName, bool noDuplicate)
 {

@@ -1398,17 +1398,13 @@ bool EditorToolkitNeume::Insert(std::string elementType, std::string staffId, in
         delete zone;
         zone = NULL;
 
-        Note *note = new Note();
-        note->SetType("schenker");
-        if (hasLoc) note->SetLoc(loc);
-        note->SetDur(DURATION_1);
-        note->SetStemVisible(BOOLEAN_false);
-
-        const std::string xStr = std::to_string(schenkerX);
-        note->m_unsupported.push_back(std::make_pair("schenker:x", xStr));
-        note->SetDrawingFreeX(static_cast<int>(std::lround(schenkerX * DEFINITION_FACTOR)));
-
-        layer->AddChild(note);
+        Note *note = EditorToolkit::CreateSchenkerNote(layer, hasLoc ? loc : 0, schenkerX);
+        if (!note) {
+            LogError("Could not create structural note");
+            m_editInfo.import("status", "FAILURE");
+            m_editInfo.import("message", "Could not create structural note.");
+            return false;
+        }
 
         m_editInfo.import("uuid", note->GetID());
     }

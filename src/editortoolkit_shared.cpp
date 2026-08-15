@@ -9,8 +9,11 @@
 
 //--------------------------------------------------------------------------------
 
+#include <cmath>
+#include <exception>
 #include <locale>
 #include <set>
+#include <string>
 
 //--------------------------------------------------------------------------------
 
@@ -167,24 +170,37 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
         LogWarning("Could not parse the drag action");
     }
     else if (action == "insert") {
-        std::string elementName, elementId, insertMode;
-        if (this->ParseInsertAction(json.get<jsonxx::Object>("param"), elementName, elementId, insertMode)) {
-            this->PrepareUndo();
-            // LogInfo("%s %s %s", elementName.c_str(), elementId.c_str(), insertMode.c_str());
-            if (insertMode == "appendChild") {
-                return (this->AppendChild(elementId, elementName, false));
+        jsonxx::Object param = json.get<jsonxx::Object>("param");
+        if (this->IsSchenkerNoteInsert(param)) {
+            std::string staffId;
+            int loc = 0;
+            double schenkerX = 0.0;
+            if (this->ParseSchenkerNoteInsertAction(param, staffId, loc, schenkerX)) {
+                this->PrepareUndo();
+                return this->InsertSchenkerNote(staffId, loc, schenkerX);
             }
-            else if (insertMode == "appendChildNoDuplicate") {
-                return (this->AppendChild(elementId, elementName, true));
-            }
-            else if (insertMode == "insertBefore") {
-                return (this->InsertBefore(elementId, elementName));
-            }
-            else if (insertMode == "insertAfter") {
-                return (this->InsertAfter(elementId, elementName));
-            }
+            LogWarning("Could not parse the insert action");
         }
-        LogWarning("Could not parse the insert action");
+        else {
+            std::string elementName, elementId, insertMode;
+            if (this->ParseInsertAction(param, elementName, elementId, insertMode)) {
+                this->PrepareUndo();
+                // LogInfo("%s %s %s", elementName.c_str(), elementId.c_str(), insertMode.c_str());
+                if (insertMode == "appendChild") {
+                    return (this->AppendChild(elementId, elementName, false));
+                }
+                else if (insertMode == "appendChildNoDuplicate") {
+                    return (this->AppendChild(elementId, elementName, true));
+                }
+                else if (insertMode == "insertBefore") {
+                    return (this->InsertBefore(elementId, elementName));
+                }
+                else if (insertMode == "insertAfter") {
+                    return (this->InsertAfter(elementId, elementName));
+                }
+            }
+            LogWarning("Could not parse the insert action");
+        }
     }
     else if (action == "insertControl") {
         std::string elementName, startId, endId;
@@ -286,6 +302,64 @@ bool EditorToolkitShared::ParseInsertAction(
     elementId = param.get<jsonxx::String>("elementId");
     if (!param.has<jsonxx::String>("insertMode")) return false;
     insertMode = param.get<jsonxx::String>("insertMode");
+    return true;
+}
+
+bool EditorToolkitShared::IsSchenkerNoteInsert(const jsonxx::Object &param) const
+{
+    if (!param.has<jsonxx::String>("elementType")) return false;
+    if (param.get<jsonxx::String>("elementType") != "note") return false;
+    if (!param.has<jsonxx::Object>("attributes")) return false;
+    jsonxx::Object attributes = param.get<jsonxx::Object>("attributes");
+    if (!attributes.has<jsonxx::String>("type")) return false;
+    return attributes.get<jsonxx::String>("type") == "schenker";
+}
+
+bool EditorToolkitShared::ParseSchenkerNoteInsertAction(
+    jsonxx::Object param, std::string &staffId, int &loc, double &schenkerX)
+{
+    if (!param.has<jsonxx::String>("elementType")) return false;
+    if (param.get<jsonxx::String>("elementType") != "note") return false;
+    if (!param.has<jsonxx::String>("staffId")) return false;
+    staffId = param.get<jsonxx::String>("staffId");
+    if (!param.has<jsonxx::Number>("ulx")) return false;
+    if (!param.has<jsonxx::Number>("uly")) return false;
+    if (!param.has<jsonxx::Object>("attributes")) return false;
+
+    jsonxx::Object attributes = param.get<jsonxx::Object>("attributes");
+    if (!attributes.has<jsonxx::String>("type")) return false;
+    if (attributes.get<jsonxx::String>("type") != "schenker") return false;
+
+    if (attributes.has<jsonxx::String>("loc")) {
+        try {
+            loc = std::stoi(attributes.get<jsonxx::String>("loc"));
+        }
+        catch (const std::exception &) {
+            return false;
+        }
+    }
+    else if (attributes.has<jsonxx::Number>("loc")) {
+        loc = static_cast<int>(attributes.get<jsonxx::Number>("loc"));
+    }
+    else {
+        return false;
+    }
+
+    if (attributes.has<jsonxx::String>("schenker:x")) {
+        try {
+            schenkerX = std::stod(attributes.get<jsonxx::String>("schenker:x"));
+        }
+        catch (const std::exception &) {
+            return false;
+        }
+    }
+    else if (attributes.has<jsonxx::Number>("schenker:x")) {
+        schenkerX = attributes.get<jsonxx::Number>("schenker:x");
+    }
+    else {
+        return false;
+    }
+
     return true;
 }
 
@@ -531,6 +605,43 @@ bool EditorToolkitShared::Drag(std::string &elementId, int x, int y)
         return true;
     }
     return false;
+}
+
+bool EditorToolkitShared::InsertSchenkerNote(const std::string &staffId, int loc, double schenkerX)
+{
+    Object *target = this->GetElement(staffId);
+    Staff *staff = dynamic_cast<Staff *>(target);
+    if (!staff && target) {
+        staff = dynamic_cast<Staff *>(target->GetFirstAncestor(STAFF));
+    }
+    if (!staff) {
+        LogError("Could not find staff '%s' for structural note", staffId.c_str());
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Could not find staff for structural note.");
+        return false;
+    }
+
+    Layer *layer = vrv_cast<Layer *>(staff->FindDescendantByType(LAYER));
+    if (!layer) {
+        LogError("Could not find layer on staff '%s' for structural note", staffId.c_str());
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Could not find layer for structural note.");
+        return false;
+    }
+
+    Note *note = EditorToolkit::CreateSchenkerNote(layer, loc, schenkerX);
+    if (!note) {
+        LogError("Could not create structural note");
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Could not create structural note.");
+        return false;
+    }
+
+    layer->ReorderByXPos();
+    this->SetEditInfo();
+    m_editInfo.import("uuid", note->GetID());
+    m_editInfo.import("status", "OK");
+    return true;
 }
 
 bool EditorToolkitShared::InsertControl(

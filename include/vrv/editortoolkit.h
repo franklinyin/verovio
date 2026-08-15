@@ -21,6 +21,9 @@
 
 namespace vrv {
 
+class Layer;
+class Note;
+
 //--------------------------------------------------------------------------------
 // EditorToolkit
 //--------------------------------------------------------------------------------
@@ -52,6 +55,12 @@ protected:
     Object *GetElement(const std::string &elementId);
     Object *PrepareInsertion(Object *parent, const std::string &elementName);
     Object *GetChainedElement(std::string &elementId);
+
+    /**
+     * Create a Stage 1 Schenker structural note (type=schenker, loc, schenker:x / free-X).
+     * Adds the note to layer. Does not create a facsimile zone.
+     */
+    static Note *CreateSchenkerNote(Layer *layer, int loc, double schenkerX);
 #endif
 
 protected:
