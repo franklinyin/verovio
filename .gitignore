@@ -106,3 +106,6 @@ bindings/go/CMakeFiles
 bindings/go/CMakeCache.txt
 bindings/go/libverovio.dylib
 bindings/go/install_manifest.txt
+
+# Local Emscripten SDK (do not commit)
+emsdk/
