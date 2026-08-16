@@ -334,11 +334,9 @@ FunctorCode ScoreDefSetCurrentFunctor::VisitStaff(Staff *staff)
     if (staff->IsTabLuteGerman()) {
         staff->m_drawingStaffSize *= GERMAN_TAB_STAFF_RATIO;
     }
-    else     if (staff->IsTablature()) {
+    else if (staff->IsTablature()) {
         staff->m_drawingStaffSize *= TABLATURE_STAFF_RATIO;
     }
-    // Restore facsimile/transcription staff size after the default 100 reset.
-    staff->AdjustDrawingStaffSize();
     if (MeterSigGrp *metersiggrp = m_currentStaffDef->GetCurrentMeterSigGrp();
         metersiggrp->GetFunc() == meterSigGrpLog_FUNC_alternating) {
         Measure *parentMeasure = vrv_cast<Measure *>(staff->GetFirstAncestor(MEASURE));

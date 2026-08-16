@@ -55,6 +55,26 @@
 
 namespace vrv {
 
+namespace {
+
+void LogSchenkerStaffGeometry(const char *stage, Doc *doc, Staff *staff)
+{
+    if (!staff) {
+        LogInfo("Schenker staff [%s]: staff=null", stage);
+        return;
+    }
+    Page *page = doc ? doc->GetDrawingPage() : NULL;
+    Zone *zone = staff->GetZone();
+    LogInfo(
+        "Schenker staff [%s] id=%s size=%d facsY=%d ppu=%f page=%dx%d zone=%s", stage, staff->GetID().c_str(),
+        staff->m_drawingStaffSize, staff->m_drawingFacsY, page ? page->GetPPUFactor() : -1.0,
+        page ? page->m_pageWidth : -1, page ? page->m_pageHeight : -1,
+        zone ? StringFormat("%d,%d,%d,%d", zone->GetUlx(), zone->GetUly(), zone->GetLrx(), zone->GetLry()).c_str()
+             : "none");
+}
+
+} // namespace
+
 EditorToolkitShared::EditorToolkitShared(Doc *doc, View *view) : EditorToolkit(doc, view)
 {
     m_undoPrepared = false;
@@ -89,7 +109,29 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
 
     std::string action = json.get<jsonxx::String>("action");
 
-    if (action != "context" && action != "properties") {
+    // Stage-1 Schenker insert is an overlay on already-established transcription
+    // geometry. Do not run the generic CMN SetFocus() cycle (PrepareData /
+    // ScoreDefSetCurrentDoc / RefreshLayout) before the note even exists.
+    bool isSchenkerInsert = false;
+    if ((action == "insert") && json.has<jsonxx::Object>("param")) {
+        isSchenkerInsert = this->IsSchenkerNoteInsert(json.get<jsonxx::Object>("param"));
+    }
+
+    if (isSchenkerInsert) {
+        jsonxx::Object param = json.get<jsonxx::Object>("param");
+        std::string staffId;
+        int loc = 0;
+        double schenkerX = 0.0;
+        Staff *probe = NULL;
+        if (this->ParseSchenkerNoteInsertAction(param, staffId, loc, schenkerX)) {
+            Object *target = this->GetElement(staffId);
+            probe = dynamic_cast<Staff *>(target);
+            if (!probe && target) probe = dynamic_cast<Staff *>(target->GetFirstAncestor(STAFF));
+        }
+        LogSchenkerStaffGeometry("A-before-SetFocus-skipped", m_doc, probe);
+    }
+
+    if (!isSchenkerInsert && (action != "context") && (action != "properties")) {
         m_doc->SetFocus();
     }
 
@@ -631,6 +673,7 @@ bool EditorToolkitShared::InsertSchenkerNote(const std::string &staffId, int loc
         return false;
     }
 
+    LogSchenkerStaffGeometry("C-before-CreateSchenkerNote", m_doc, staff);
     Note *note = EditorToolkit::CreateSchenkerNote(layer, loc, schenkerX);
     if (!note) {
         LogError("Could not create structural note");
@@ -638,22 +681,13 @@ bool EditorToolkitShared::InsertSchenkerNote(const std::string &staffId, int loc
         m_editInfo.import("message", "Could not create structural note.");
         return false;
     }
+    LogSchenkerStaffGeometry("D-after-CreateSchenkerNote", m_doc, staff);
 
     layer->ReorderByXPos();
-    // Do not force a second transcription layout here. SetFocus already laid
-    // the page out; Neon will renderToSVG, which runs LayOutTranscription()
-    // once if we mark the page dirty. A forced pass skipped the bbox fill and
-    // could recompute page geometry at a different PPU stage.
     if (Page *page = m_doc->GetDrawingPage()) {
-        const Staff *refStaff = staff;
-        LogInfo("Schenker insert before rerender: type=%d page=%dx%d ppu=%f staffSize=%d staffY=%d staffX=%d schenkerX=%f",
-            m_doc->GetType(), page->m_pageWidth, page->m_pageHeight, page->GetPPUFactor(),
-            refStaff->m_drawingStaffSize, refStaff->GetDrawingY(),
-            (refStaff->GetFirstAncestor(MEASURE) ? vrv_cast<const Measure *>(refStaff->GetFirstAncestor(MEASURE))->GetDrawingX()
-                                                 : 0),
-            schenkerX);
         page->DeprecateLayout();
     }
+    LogSchenkerStaffGeometry("E-before-renderToSVG", m_doc, staff);
     this->SetEditInfo();
     m_editInfo.import("uuid", note->GetID());
     m_editInfo.import("status", "OK");
