@@ -964,7 +964,7 @@ void Doc::PrepareData()
     root->Process(prepareLayerElementParts);
 
     /************ Resolve @facs ************/
-    if (this->IsFacs()) {
+    if (this->HasFacsimile() && (this->IsFacs() || this->IsTranscription())) {
         // Associate zones with elements
         PrepareFacsimileFunctor prepareFacsimile(this->GetFacsimile());
         root->Process(prepareFacsimile);

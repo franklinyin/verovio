@@ -9,6 +9,10 @@
 
 //----------------------------------------------------------------------------
 
+#include <cmath>
+
+//----------------------------------------------------------------------------
+
 #include "doc.h"
 #include "layerelement.h"
 #include "measure.h"
@@ -87,7 +91,8 @@ FunctorCode SyncFromFacsimileFunctor::VisitPage(Page *page)
 FunctorCode SyncFromFacsimileFunctor::VisitPageEnd(Page *page)
 {
     // Used for adjusting staff size in neon - filled in VisitStaff
-    if (!m_staffZones.empty()) {
+    const bool ppuAlreadyApplied = (m_currentPage->GetPPUFactor() != 1.0);
+    if (!m_staffZones.empty() && !ppuAlreadyApplied) {
         // Since we multiply all values by the DEFINITION_FACTOR, set it as PPU for neon facs
         m_ppuFactor = DEFINITION_FACTOR;
     }
@@ -97,10 +102,15 @@ FunctorCode SyncFromFacsimileFunctor::VisitPageEnd(Page *page)
         double rotate = (zone->HasRotate()) ? zone->GetRotate() : 0.0;
         int yDiff
             = zone->GetLry() - zone->GetUly() - (zone->GetLrx() - zone->GetUlx()) * tan(abs(rotate) * M_PI / 180.0);
+        if (ppuAlreadyApplied) {
+            yDiff = static_cast<int>(std::lround(static_cast<double>(yDiff) / m_currentPage->GetPPUFactor()));
+        }
         staff->m_drawingStaffSize
             = 100 * yDiff / (m_doc->GetOptions()->m_unit.GetValue() * 2 * (staff->m_drawingLines - 1));
         staff->SetDrawingRotation(rotate);
     }
+
+    if (ppuAlreadyApplied) return FUNCTOR_CONTINUE;
 
     m_currentPage->SetPPUFactor(m_ppuFactor);
     if (m_currentPage->GetPPUFactor() != 1.0) {

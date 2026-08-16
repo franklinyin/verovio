@@ -1502,6 +1502,11 @@ void View::DrawNote(DeviceContext *dc, LayerElement *element, Layer *layer, Staf
 
     this->CalcOffset(dc, x, y);
 
+    if (note->IsSchenker()) {
+        // schenker:x stores the visual center; SMuFL noteheads are drawn from the left origin.
+        x -= note->GetDrawingRadius(m_doc);
+    }
+
     if (note->HasStemSameasNote() && note->GetFlippedNotehead()) {
         int xShift = note->GetDrawingRadius(m_doc) * 2 - m_doc->GetDrawingStemWidth(staff->m_drawingStaffSize);
         xShift *= (note->GetDrawingStemDir() == STEMDIRECTION_up) ? -1 : 1;

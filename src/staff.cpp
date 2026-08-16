@@ -219,18 +219,31 @@ double Staff::GetDrawingRotate() const
 
 void Staff::AdjustDrawingStaffSize()
 {
-    if (this->HasFacs()) {
-        Doc *doc = vrv_cast<Doc *>(this->GetFirstAncestor(DOC));
-        assert(doc);
-        if (doc->IsFacs() || doc->IsNeumeLines()) {
-            double rotate = this->GetDrawingRotate();
-            Zone *zone = this->GetZone();
-            assert(zone);
-            int yDiff
-                = zone->GetLry() - zone->GetUly() - (zone->GetLrx() - zone->GetUlx()) * tan(abs(rotate) * M_PI / 180.0);
-            m_drawingStaffSize = 100 * yDiff / (doc->GetOptions()->m_unit.GetValue() * 2 * (m_drawingLines - 1));
+    if (!this->HasFacs()) return;
+
+    Doc *doc = vrv_cast<Doc *>(this->GetFirstAncestor(DOC));
+    assert(doc);
+    if (!(doc->IsFacs() || doc->IsTranscription() || doc->IsNeumeLines())) return;
+
+    Zone *zone = this->GetZone();
+    if (!zone) return;
+
+    double rotate = this->GetDrawingRotate();
+    int yDiff
+        = zone->GetLry() - zone->GetUly() - (zone->GetLrx() - zone->GetUlx()) * tan(abs(rotate) * M_PI / 180.0);
+
+    // Zones may already be in PPU-scaled units after SyncFromFacsimileDoc.
+    const Page *page = vrv_cast<const Page *>(this->GetFirstAncestor(PAGE));
+    if (!page && doc->GetDrawingPage()) page = doc->GetDrawingPage();
+    if (page) {
+        const double ppu = page->GetPPUFactor();
+        if ((ppu != 0.0) && (ppu != 1.0)) {
+            yDiff = static_cast<int>(std::lround(static_cast<double>(yDiff) / ppu));
         }
     }
+
+    m_drawingStaffSize
+        = 100 * yDiff / (doc->GetOptions()->m_unit.GetValue() * 2 * (m_drawingLines - 1));
 }
 
 int Staff::GetDrawingStaffNotationSize() const

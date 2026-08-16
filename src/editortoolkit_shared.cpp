@@ -640,8 +640,19 @@ bool EditorToolkitShared::InsertSchenkerNote(const std::string &staffId, int loc
     }
 
     layer->ReorderByXPos();
+    // Do not force a second transcription layout here. SetFocus already laid
+    // the page out; Neon will renderToSVG, which runs LayOutTranscription()
+    // once if we mark the page dirty. A forced pass skipped the bbox fill and
+    // could recompute page geometry at a different PPU stage.
     if (Page *page = m_doc->GetDrawingPage()) {
-        page->LayOutTranscription(true);
+        const Staff *refStaff = staff;
+        LogInfo("Schenker insert before rerender: type=%d page=%dx%d ppu=%f staffSize=%d staffY=%d staffX=%d schenkerX=%f",
+            m_doc->GetType(), page->m_pageWidth, page->m_pageHeight, page->GetPPUFactor(),
+            refStaff->m_drawingStaffSize, refStaff->GetDrawingY(),
+            (refStaff->GetFirstAncestor(MEASURE) ? vrv_cast<const Measure *>(refStaff->GetFirstAncestor(MEASURE))->GetDrawingX()
+                                                 : 0),
+            schenkerX);
+        page->DeprecateLayout();
     }
     this->SetEditInfo();
     m_editInfo.import("uuid", note->GetID());
