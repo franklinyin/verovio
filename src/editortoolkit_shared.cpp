@@ -109,29 +109,44 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
 
     std::string action = json.get<jsonxx::String>("action");
 
-    // Stage-1 Schenker insert is an overlay on already-established transcription
-    // geometry. Do not run the generic CMN SetFocus() cycle (PrepareData /
-    // ScoreDefSetCurrentDoc / RefreshLayout) before the note even exists.
-    bool isSchenkerInsert = false;
+    // Stage-1 Schenker insert/delete is an overlay on already-established
+    // transcription geometry. Do not run the generic CMN SetFocus() cycle
+    // (PrepareData / ScoreDefSetCurrentDoc / RefreshLayout).
+    bool skipSetFocus = false;
     if ((action == "insert") && json.has<jsonxx::Object>("param")) {
-        isSchenkerInsert = this->IsSchenkerNoteInsert(json.get<jsonxx::Object>("param"));
+        skipSetFocus = this->IsSchenkerNoteInsert(json.get<jsonxx::Object>("param"));
+    }
+    else if ((action == "delete") && json.has<jsonxx::Object>("param")) {
+        skipSetFocus = this->IsSchenkerNoteDelete(json.get<jsonxx::Object>("param"));
+    }
+    else if ((action == "chain") && json.has<jsonxx::Array>("param")) {
+        skipSetFocus = this->IsSchenkerOverlayChain(json.get<jsonxx::Array>("param"));
     }
 
-    if (isSchenkerInsert) {
-        jsonxx::Object param = json.get<jsonxx::Object>("param");
-        std::string staffId;
-        int loc = 0;
-        double schenkerX = 0.0;
+    if (skipSetFocus) {
         Staff *probe = NULL;
-        if (this->ParseSchenkerNoteInsertAction(param, staffId, loc, schenkerX)) {
-            Object *target = this->GetElement(staffId);
-            probe = dynamic_cast<Staff *>(target);
-            if (!probe && target) probe = dynamic_cast<Staff *>(target->GetFirstAncestor(STAFF));
+        if ((action == "delete") && json.has<jsonxx::Object>("param")) {
+            std::string elementId;
+            if (this->ParseDeleteAction(json.get<jsonxx::Object>("param"), elementId)) {
+                Object *target = this->GetElement(elementId);
+                if (target) probe = dynamic_cast<Staff *>(target->GetFirstAncestor(STAFF));
+            }
+        }
+        else if ((action == "insert") && json.has<jsonxx::Object>("param")) {
+            jsonxx::Object param = json.get<jsonxx::Object>("param");
+            std::string staffId;
+            int loc = 0;
+            double schenkerX = 0.0;
+            if (this->ParseSchenkerNoteInsertAction(param, staffId, loc, schenkerX)) {
+                Object *target = this->GetElement(staffId);
+                probe = dynamic_cast<Staff *>(target);
+                if (!probe && target) probe = dynamic_cast<Staff *>(target->GetFirstAncestor(STAFF));
+            }
         }
         LogSchenkerStaffGeometry("A-before-SetFocus-skipped", m_doc, probe);
     }
 
-    if (!isSchenkerInsert && (action != "context") && (action != "properties")) {
+    if (!skipSetFocus && (action != "context") && (action != "properties")) {
         m_doc->SetFocus();
     }
 
@@ -357,6 +372,38 @@ bool EditorToolkitShared::IsSchenkerNoteInsert(const jsonxx::Object &param) cons
     return attributes.get<jsonxx::String>("type") == "schenker";
 }
 
+bool EditorToolkitShared::IsSchenkerNoteDelete(const jsonxx::Object &param)
+{
+    std::string elementId;
+    if (!this->ParseDeleteAction(param, elementId)) return false;
+    Object *element = this->GetElement(elementId);
+    if (!element) return false;
+    LayerElement *layerElement = dynamic_cast<LayerElement *>(element);
+    return layerElement && layerElement->IsSchenker();
+}
+
+bool EditorToolkitShared::IsSchenkerOverlayChain(const jsonxx::Array &actions)
+{
+    if (actions.size() < 1) return false;
+    for (int i = 0; i < (int)actions.size(); ++i) {
+        if (!actions.has<jsonxx::Object>(i)) return false;
+        jsonxx::Object step = actions.get<jsonxx::Object>(i);
+        if (!step.has<jsonxx::String>("action") || !step.has<jsonxx::Object>("param")) return false;
+        const std::string stepAction = step.get<jsonxx::String>("action");
+        const jsonxx::Object stepParam = step.get<jsonxx::Object>("param");
+        if (stepAction == "insert") {
+            if (!this->IsSchenkerNoteInsert(stepParam)) return false;
+        }
+        else if (stepAction == "delete") {
+            if (!this->IsSchenkerNoteDelete(stepParam)) return false;
+        }
+        else {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool EditorToolkitShared::ParseSchenkerNoteInsertAction(
     jsonxx::Object param, std::string &staffId, int &loc, double &schenkerX)
 {
@@ -578,6 +625,14 @@ bool EditorToolkitShared::Delete(std::string &elementId)
 
     if (!element) return false;
 
+    LayerElement *layerElement = dynamic_cast<LayerElement *>(element);
+    const bool schenkerNote = layerElement && layerElement->IsSchenker();
+    Staff *schenkerStaff = NULL;
+    if (schenkerNote) {
+        schenkerStaff = dynamic_cast<Staff *>(element->GetFirstAncestor(STAFF));
+        LogSchenkerStaffGeometry("F-before-schenker-delete", m_doc, schenkerStaff);
+    }
+
     this->Navigate(elementId, 37);
     if (m_chainedId.empty() && element->GetParent()) m_chainedId = element->GetParent()->GetID();
 
@@ -592,6 +647,13 @@ bool EditorToolkitShared::Delete(std::string &elementId)
     }
 
     if (!m_chainedId.empty() && !m_doc->FindDescendantByID(m_chainedId)) m_chainedId = "";
+
+    if (schenkerNote) {
+        if (Page *page = m_doc->GetDrawingPage()) {
+            page->DeprecateLayout();
+        }
+        LogSchenkerStaffGeometry("G-after-schenker-delete", m_doc, schenkerStaff);
+    }
 
     this->ClearContext();
     this->SetEditInfo();
