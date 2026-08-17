@@ -31,6 +31,8 @@
 #include "tabgrp.h"
 #include "verse.h"
 
+#include "comparison.h"
+
 //----------------------------------------------------------------------------
 
 namespace vrv {
@@ -152,9 +154,20 @@ FunctorCode AlignHorizontallyFunctor::VisitLayerElement(LayerElement *layerEleme
 
     // Analytical Schenker notes keep a dummy alignment pointer but must not
     // reserve rhythmic time, contribute to measure/system spacing, or register
-    // stem/flag children in the alignment.
+    // stem/flag children in the alignment. Stem/flag still share the dummy
+    // pointer so they draw at the note's free-X.
     if (layerElement->IsSchenker()) {
-        layerElement->SetAlignment(m_measureAligner->GetAlignmentAtTime(m_time, ALIGNMENT_DEFAULT));
+        Alignment *alignment = m_measureAligner->GetAlignmentAtTime(m_time, ALIGNMENT_DEFAULT);
+        layerElement->SetAlignment(alignment);
+        ClassIdsComparison ids({ STEM, FLAG });
+        ListOfObjects parts;
+        layerElement->FindAllDescendantsByComparison(&parts, &ids);
+        for (Object *object : parts) {
+            LayerElement *part = vrv_cast<LayerElement *>(object);
+            if (part && !part->GetAlignment()) {
+                part->SetAlignment(alignment);
+            }
+        }
         return FUNCTOR_SIBLINGS;
     }
 

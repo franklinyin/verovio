@@ -14,6 +14,7 @@
 #include "elementpart.h"
 #include "ftrem.h"
 #include "layer.h"
+#include "layerelement.h"
 #include "staff.h"
 #include "stem.h"
 #include "tabdursym.h"
@@ -402,6 +403,12 @@ FunctorCode CalcStemFunctor::VisitStem(Stem *stem)
             stem->SetDrawingStemLen(-(baseStem + m_chordStemLength - stemShortening));
         }
         stem->SetDrawingYRel(stem->GetDrawingYRel() + p.y);
+        // schenker:x is the visual center; stem attachment is relative to the
+        // SMuFL left origin, same as DrawNote's radius shift.
+        LayerElement *parentNote = vrv_cast<LayerElement *>(stem->GetFirstAncestor(NOTE));
+        if (parentNote && parentNote->IsSchenker()) {
+            p.x -= parentNote->GetDrawingRadius(m_doc);
+        }
         stem->SetDrawingXRel(p.x);
     }
 
