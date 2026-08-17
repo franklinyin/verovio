@@ -28,14 +28,14 @@ namespace vrv {
 
 #define CHAINED_ID "[chained-id]"
 
-Note *EditorToolkit::CreateSchenkerNote(Layer *layer, int loc, double schenkerX)
+Note *EditorToolkit::CreateSchenkerNote(Layer *layer, int loc, double schenkerX, bool filledHead)
 {
     if (!layer) return NULL;
 
     Note *note = new Note();
     note->SetType("schenker");
     note->SetLoc(loc);
-    note->SetDur(DURATION_1);
+    note->SetDur(filledHead ? DURATION_4 : DURATION_1);
     note->SetStemVisible(BOOLEAN_false);
 
     const std::string xStr = std::to_string(schenkerX);

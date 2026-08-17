@@ -59,8 +59,10 @@ protected:
     /**
      * Create a Stage 1 Schenker structural note (type=schenker, loc, schenker:x / free-X).
      * Adds the note to layer. Does not create a facsimile zone.
+     * filledHead uses dur=4 so Verovio draws noteheadBlack (E0A4).
+     * Stem and flag are never drawn (stem.visible=false).
      */
-    static Note *CreateSchenkerNote(Layer *layer, int loc, double schenkerX);
+    static Note *CreateSchenkerNote(Layer *layer, int loc, double schenkerX, bool filledHead = false);
 #endif
 
 protected:

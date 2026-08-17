@@ -137,7 +137,8 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
             std::string staffId;
             int loc = 0;
             double schenkerX = 0.0;
-            if (this->ParseSchenkerNoteInsertAction(param, staffId, loc, schenkerX)) {
+            bool filledHead = false;
+            if (this->ParseSchenkerNoteInsertAction(param, staffId, loc, schenkerX, filledHead)) {
                 Object *target = this->GetElement(staffId);
                 probe = dynamic_cast<Staff *>(target);
                 if (!probe && target) probe = dynamic_cast<Staff *>(target->GetFirstAncestor(STAFF));
@@ -232,9 +233,10 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
             std::string staffId;
             int loc = 0;
             double schenkerX = 0.0;
-            if (this->ParseSchenkerNoteInsertAction(param, staffId, loc, schenkerX)) {
+            bool filledHead = false;
+            if (this->ParseSchenkerNoteInsertAction(param, staffId, loc, schenkerX, filledHead)) {
                 this->PrepareUndo();
-                return this->InsertSchenkerNote(staffId, loc, schenkerX);
+                return this->InsertSchenkerNote(staffId, loc, schenkerX, filledHead);
             }
             LogWarning("Could not parse the Schenker insert action: %s", param.json().c_str());
         }
@@ -405,8 +407,9 @@ bool EditorToolkitShared::IsSchenkerOverlayChain(const jsonxx::Array &actions)
 }
 
 bool EditorToolkitShared::ParseSchenkerNoteInsertAction(
-    jsonxx::Object param, std::string &staffId, int &loc, double &schenkerX)
+    jsonxx::Object param, std::string &staffId, int &loc, double &schenkerX, bool &filledHead)
 {
+    filledHead = false;
     if (!param.has<jsonxx::String>("elementType")) return false;
     if (param.get<jsonxx::String>("elementType") != "note") return false;
     if (!param.has<jsonxx::String>("staffId")) return false;
@@ -449,6 +452,13 @@ bool EditorToolkitShared::ParseSchenkerNoteInsertAction(
     }
     else {
         return false;
+    }
+
+    if (attributes.has<jsonxx::String>("dur")) {
+        filledHead = (attributes.get<jsonxx::String>("dur") == "4");
+    }
+    else if (attributes.has<jsonxx::Number>("dur")) {
+        filledHead = (static_cast<int>(attributes.get<jsonxx::Number>("dur")) == 4);
     }
 
     return true;
@@ -713,7 +723,8 @@ bool EditorToolkitShared::Drag(std::string &elementId, int x, int y)
     return false;
 }
 
-bool EditorToolkitShared::InsertSchenkerNote(const std::string &staffId, int loc, double schenkerX)
+bool EditorToolkitShared::InsertSchenkerNote(
+    const std::string &staffId, int loc, double schenkerX, bool filledHead)
 {
     Object *target = this->GetElement(staffId);
     Staff *staff = dynamic_cast<Staff *>(target);
@@ -736,7 +747,7 @@ bool EditorToolkitShared::InsertSchenkerNote(const std::string &staffId, int loc
     }
 
     LogSchenkerStaffGeometry("C-before-CreateSchenkerNote", m_doc, staff);
-    Note *note = EditorToolkit::CreateSchenkerNote(layer, loc, schenkerX);
+    Note *note = EditorToolkit::CreateSchenkerNote(layer, loc, schenkerX, filledHead);
     if (!note) {
         LogError("Could not create structural note");
         m_editInfo.import("status", "FAILURE");
