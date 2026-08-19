@@ -56,8 +56,10 @@ protected:
     bool IsSchenkerNoteInsert(const jsonxx::Object &param) const;
     bool IsSchenkerNoteDelete(const jsonxx::Object &param);
     bool IsSchenkerBeamAction(const jsonxx::Object &param);
+    bool IsSchenkerFlipAction(const jsonxx::Object &param);
     bool IsSchenkerOverlayChain(const jsonxx::Array &actions);
     bool ParseBeamAction(jsonxx::Object param, std::vector<std::string> &noteIds);
+    bool ParseFlipAction(jsonxx::Object param, std::string &elementId);
     bool ParseSchenkerNoteInsertAction(jsonxx::Object param, std::string &staffId, int &loc,
         double &schenkerX, int &dur, bool &voidHead, bool &showStem);
     bool ParseInsertControlAction(
@@ -83,6 +85,7 @@ protected:
     ///@{
     bool Delete(std::string &elementId);
     bool BeamSchenkerNotes(const std::vector<std::string> &noteIds);
+    bool FlipSchenker(const std::string &elementId);
     bool Drag(std::string &elementId, int x, int y);
     bool InsertSchenkerNote(
         const std::string &staffId, int loc, double schenkerX, int dur, bool voidHead, bool showStem);

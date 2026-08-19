@@ -73,6 +73,64 @@ bool IsSchenkerBeamableNote(const Note *note)
     return true;
 }
 
+bool IsSchenkerStemmedNote(const Note *note)
+{
+    if (!note || !note->IsSchenker()) return false;
+    if (note->IsInBeam()) return false;
+    if (note->GetActualDur() == DURATION_1) return false;
+    const Stem *stem = vrv_cast<const Stem *>(note->FindDescendantByType(STEM, 1));
+    if (!stem || (stem->GetVisible() == BOOLEAN_false)) return false;
+    return true;
+}
+
+bool IsSchenkerBeamElement(const Beam *beam)
+{
+    if (!beam) return false;
+    ListOfConstObjects notes = beam->FindAllDescendantsByType(NOTE);
+    if (notes.empty()) return false;
+    for (const Object *object : notes) {
+        const Note *note = vrv_cast<const Note *>(object);
+        if (!note || !note->IsSchenker()) return false;
+    }
+    return true;
+}
+
+data_STEMDIRECTION ResolveSchenkerStemDir(Note *note, Doc *doc, Staff *staff)
+{
+    if (note->HasStemDir()) return note->GetStemDir();
+    if (note->GetDrawingStemDir() != STEMDIRECTION_NONE) return note->GetDrawingStemDir();
+    Stem *stem = note->GetDrawingStem();
+    if (stem && stem->HasDir()) return stem->GetDir();
+    if (staff && doc) {
+        const int verticalCenter
+            = staff->GetDrawingY() - doc->GetDrawingUnit(staff->m_drawingStaffSize) * (staff->m_drawingLines - 1);
+        return (note->GetDrawingY() >= verticalCenter) ? STEMDIRECTION_down : STEMDIRECTION_up;
+    }
+    return STEMDIRECTION_up;
+}
+
+void ApplyStemDirToNote(Note *note, data_STEMDIRECTION dir)
+{
+    note->SetStemDir(dir);
+    note->SetDrawingStemDir(dir);
+    if (Stem *stem = note->GetDrawingStem()) {
+        stem->SetDir(dir);
+    }
+}
+
+data_BEAMPLACE ResolveSchenkerBeamPlace(Beam *beam, Doc *doc, Staff *staff)
+{
+    if (beam->HasPlace()) return beam->GetPlace();
+    if (beam->m_drawingPlace != BEAMPLACE_NONE) return beam->m_drawingPlace;
+    const Note *first = vrv_cast<const Note *>(beam->FindDescendantByType(NOTE));
+    if (first && staff) {
+        const data_STEMDIRECTION dir
+            = ResolveSchenkerStemDir(const_cast<Note *>(first), doc, staff);
+        return (dir == STEMDIRECTION_up) ? BEAMPLACE_above : BEAMPLACE_below;
+    }
+    return BEAMPLACE_below;
+}
+
 void LogSchenkerStaffGeometry(const char *stage, Doc *doc, Staff *staff)
 {
     if (!staff) {
@@ -137,6 +195,9 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
     }
     else if ((action == "beam") && json.has<jsonxx::Object>("param")) {
         skipSetFocus = this->IsSchenkerBeamAction(json.get<jsonxx::Object>("param"));
+    }
+    else if ((action == "flip") && json.has<jsonxx::Object>("param")) {
+        skipSetFocus = this->IsSchenkerFlipAction(json.get<jsonxx::Object>("param"));
     }
     else if ((action == "chain") && json.has<jsonxx::Array>("param")) {
         skipSetFocus = this->IsSchenkerOverlayChain(json.get<jsonxx::Array>("param"));
@@ -246,6 +307,14 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
             return this->BeamSchenkerNotes(noteIds);
         }
         LogWarning("Could not parse the beam action");
+    }
+    else if (action == "flip") {
+        std::string elementId;
+        if (this->ParseFlipAction(json.get<jsonxx::Object>("param"), elementId)) {
+            this->PrepareUndo();
+            return this->FlipSchenker(elementId);
+        }
+        LogWarning("Could not parse the flip action");
     }
     else if (action == "drag") {
         std::string elementId;
@@ -440,6 +509,28 @@ bool EditorToolkitShared::IsSchenkerBeamAction(const jsonxx::Object &param)
     return true;
 }
 
+bool EditorToolkitShared::ParseFlipAction(jsonxx::Object param, std::string &elementId)
+{
+    if (!param.has<jsonxx::String>("elementId")) return false;
+    elementId = param.get<jsonxx::String>("elementId");
+    return !elementId.empty();
+}
+
+bool EditorToolkitShared::IsSchenkerFlipAction(const jsonxx::Object &param)
+{
+    std::string elementId;
+    if (!this->ParseFlipAction(param, elementId)) return false;
+    Object *element = this->GetElement(elementId);
+    if (!element) return false;
+    if (element->Is(NOTE)) {
+        return IsSchenkerStemmedNote(dynamic_cast<Note *>(element));
+    }
+    if (element->Is(BEAM)) {
+        return IsSchenkerBeamElement(dynamic_cast<Beam *>(element));
+    }
+    return false;
+}
+
 bool EditorToolkitShared::IsSchenkerOverlayChain(const jsonxx::Array &actions)
 {
     if (actions.size() < 1) return false;
@@ -457,6 +548,9 @@ bool EditorToolkitShared::IsSchenkerOverlayChain(const jsonxx::Array &actions)
         }
         else if (stepAction == "beam") {
             if (!this->IsSchenkerBeamAction(stepParam)) return false;
+        }
+        else if (stepAction == "flip") {
+            if (!this->IsSchenkerFlipAction(stepParam)) return false;
         }
         else {
             return false;
@@ -828,6 +922,78 @@ bool EditorToolkitShared::BeamSchenkerNotes(const std::vector<std::string> &note
     LogSchenkerStaffGeometry("H-after-schenker-beam", m_doc, staff);
     this->SetEditInfo();
     m_editInfo.import("uuid", beam->GetID());
+    m_editInfo.import("status", "OK");
+    return true;
+}
+
+bool EditorToolkitShared::FlipSchenker(const std::string &elementId)
+{
+    Object *element = this->GetElement(elementId);
+    if (!element) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Could not find element to flip.");
+        return false;
+    }
+
+    Staff *staff = vrv_cast<Staff *>(element->GetFirstAncestor(STAFF));
+
+    if (element->Is(NOTE)) {
+        Note *note = dynamic_cast<Note *>(element);
+        if (!IsSchenkerStemmedNote(note)) {
+            m_editInfo.import("status", "FAILURE");
+            m_editInfo.import("message", "Only unbeamed Schenker stemmed notes can be flipped.");
+            return false;
+        }
+        if (!staff) {
+            m_editInfo.import("status", "FAILURE");
+            m_editInfo.import("message", "Could not find staff for note flip.");
+            return false;
+        }
+        const data_STEMDIRECTION current = ResolveSchenkerStemDir(note, m_doc, staff);
+        const data_STEMDIRECTION flipped
+            = (current == STEMDIRECTION_up) ? STEMDIRECTION_down : STEMDIRECTION_up;
+        ApplyStemDirToNote(note, flipped);
+        LogSchenkerStaffGeometry("I-after-schenker-flip-note", m_doc, staff);
+    }
+    else if (element->Is(BEAM)) {
+        Beam *beam = dynamic_cast<Beam *>(element);
+        if (!IsSchenkerBeamElement(beam)) {
+            m_editInfo.import("status", "FAILURE");
+            m_editInfo.import("message", "Only Schenker beams can be flipped.");
+            return false;
+        }
+        if (!staff) {
+            m_editInfo.import("status", "FAILURE");
+            m_editInfo.import("message", "Could not find staff for beam flip.");
+            return false;
+        }
+        const data_BEAMPLACE current = ResolveSchenkerBeamPlace(beam, m_doc, staff);
+        const data_BEAMPLACE flipped
+            = (current == BEAMPLACE_above) ? BEAMPLACE_below : BEAMPLACE_above;
+        const data_STEMDIRECTION stemDir
+            = (flipped == BEAMPLACE_above) ? STEMDIRECTION_up : STEMDIRECTION_down;
+        beam->SetPlace(flipped);
+        ListOfObjects notes = beam->FindAllDescendantsByType(NOTE);
+        for (Object *object : notes) {
+            Note *note = vrv_cast<Note *>(object);
+            if (note) ApplyStemDirToNote(note, stemDir);
+        }
+        LogSchenkerStaffGeometry("J-after-schenker-flip-beam", m_doc, staff);
+        m_editInfo.import("uuid", beam->GetID());
+    }
+    else {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Flip applies to Schenker notes or beams only.");
+        return false;
+    }
+
+    if (Page *page = m_doc->GetDrawingPage()) {
+        page->DeprecateLayout();
+    }
+    this->SetEditInfo();
+    if (!m_editInfo.has<jsonxx::String>("uuid")) {
+        m_editInfo.import("uuid", elementId);
+    }
     m_editInfo.import("status", "OK");
     return true;
 }
