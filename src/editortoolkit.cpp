@@ -29,7 +29,8 @@ namespace vrv {
 
 #define CHAINED_ID "[chained-id]"
 
-Note *EditorToolkit::CreateSchenkerNote(Layer *layer, int loc, double schenkerX, int dur, bool voidHead)
+Note *EditorToolkit::CreateSchenkerNote(
+    Layer *layer, int loc, double schenkerX, int dur, bool voidHead, bool showStem)
 {
     if (!layer) return NULL;
 
@@ -40,6 +41,9 @@ Note *EditorToolkit::CreateSchenkerNote(Layer *layer, int loc, double schenkerX,
     else if (dur == 4) {
         duration = DURATION_4;
     }
+    else if (dur == 2) {
+        duration = DURATION_2;
+    }
 
     Note *note = new Note();
     note->SetType("schenker");
@@ -48,7 +52,7 @@ Note *EditorToolkit::CreateSchenkerNote(Layer *layer, int loc, double schenkerX,
     if (voidHead) {
         note->SetHeadFill(FILL_void);
     }
-    if (duration <= DURATION_4) {
+    if (!showStem) {
         note->SetStemVisible(BOOLEAN_false);
     }
 
@@ -61,9 +65,9 @@ Note *EditorToolkit::CreateSchenkerNote(Layer *layer, int loc, double schenkerX,
     }
     note->SetDrawingFreeXFromGraphical(schenkerX);
 
-    // Skip SetFocus / PrepareData on this overlay path. For flagged notes,
-    // instantiate stem + flag the same way PrepareLayerElementParts would.
-    if (duration > DURATION_4) {
+    // Skip SetFocus / PrepareData on this overlay path. Instantiate stem (and
+    // flag when dur > 4) the same way PrepareLayerElementParts would.
+    if (showStem) {
         PrepareLayerElementPartsFunctor prepareParts;
         note->Process(prepareParts);
     }

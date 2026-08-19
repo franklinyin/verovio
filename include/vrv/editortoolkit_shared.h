@@ -55,8 +55,8 @@ protected:
     bool IsSchenkerNoteInsert(const jsonxx::Object &param) const;
     bool IsSchenkerNoteDelete(const jsonxx::Object &param);
     bool IsSchenkerOverlayChain(const jsonxx::Array &actions);
-    bool ParseSchenkerNoteInsertAction(
-        jsonxx::Object param, std::string &staffId, int &loc, double &schenkerX, int &dur, bool &voidHead);
+    bool ParseSchenkerNoteInsertAction(jsonxx::Object param, std::string &staffId, int &loc,
+        double &schenkerX, int &dur, bool &voidHead, bool &showStem);
     bool ParseInsertControlAction(
         jsonxx::Object param, std::string &elementName, std::string &startId, std::string &endId);
     bool ParseNavigate(jsonxx::Object param, std::string &elementId, int &direction);
@@ -80,7 +80,8 @@ protected:
     ///@{
     bool Delete(std::string &elementId);
     bool Drag(std::string &elementId, int x, int y);
-    bool InsertSchenkerNote(const std::string &staffId, int loc, double schenkerX, int dur, bool voidHead);
+    bool InsertSchenkerNote(
+        const std::string &staffId, int loc, double schenkerX, int dur, bool voidHead, bool showStem);
     bool InsertControl(const std::string &elementName, const std::string startId, const std::string endId);
     bool KeyDown(std::string &elementId, int key, bool shiftKey, bool ctrlKey);
     bool Navigate(std::string &elementId, const int &direction);

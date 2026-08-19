@@ -59,11 +59,11 @@ protected:
     /**
      * Create a Stage 1 Schenker structural note (type=schenker, loc, schenker:x / free-X).
      * Adds the note to layer. Does not create a facsimile zone.
-     * dur 1: open whole head, no stem. dur 4: filled head, no stem.
-     * dur 8: stem + 8th flag (voidHead uses noteheadHalf / E0A3).
+     * dur 1: open whole head, no stem. dur 4: filled head, no stem unless showStem.
+     * dur 2: half note (stem, no flag). dur 8: stem + 8th flag (voidHead uses E0A3).
      */
-    static Note *CreateSchenkerNote(
-        Layer *layer, int loc, double schenkerX, int dur = 1, bool voidHead = false);
+    static Note *CreateSchenkerNote(Layer *layer, int loc, double schenkerX, int dur = 1,
+        bool voidHead = false, bool showStem = false);
 #endif
 
 protected:
