@@ -38,6 +38,33 @@
 
 namespace vrv {
 
+namespace {
+
+// schenker:x is the visual center; stem attachment matches CalcStemFunctor::VisitStem.
+Point GetSchenkerStemAttachmentRel(const Note *note, const Doc *doc, const Staff *staff,
+    StemmedDrawingInterface *stemmedInterface, data_STEMDIRECTION stemDir, bool cueSize)
+{
+    assert(note);
+    assert(doc);
+    assert(staff);
+    assert(stemmedInterface);
+
+    const int stemShift = doc->GetDrawingStemWidth(staff->m_drawingStaffSize) / 2;
+    Point p;
+    if (stemDir == STEMDIRECTION_up) {
+        p = stemmedInterface->GetStemUpSE(doc, staff->m_drawingStaffSize, cueSize);
+        p.x -= stemShift;
+    }
+    else {
+        p = stemmedInterface->GetStemDownNW(doc, staff->m_drawingStaffSize, cueSize);
+        p.x += stemShift;
+    }
+    p.x -= note->GetDrawingRadius(doc);
+    return p;
+}
+
+} // namespace
+
 //----------------------------------------------------------------------------
 // BeamSegment
 //----------------------------------------------------------------------------
@@ -1865,10 +1892,31 @@ void BeamElementCoord::SetDrawingStemDir(data_STEMDIRECTION stemDir, const Staff
     assert(m_stem);
 
     m_stem->SetDrawingStemDir(stemDir);
+    if (m_element->Is(NOTE)) {
+        Note *note = vrv_cast<Note *>(m_element);
+        assert(note);
+        note->SetDrawingStemDir(stemDir);
+    }
     m_yBeam = m_element->GetDrawingY();
 
     // Move and take into account the glyph cut-outs
-    if (STEMDIRECTION_up == stemDir) {
+    if (m_element->Is(NOTE)) {
+        Note *note = vrv_cast<Note *>(m_element);
+        if (note && note->IsSchenker()) {
+            const Point p
+                = GetSchenkerStemAttachmentRel(note, doc, staff, stemInterface, stemDir, interface->m_cueSize);
+            m_x = note->GetDrawingX() + p.x;
+        }
+        else if (STEMDIRECTION_up == stemDir) {
+            m_x += stemInterface->GetStemUpSE(doc, staff->m_drawingStaffSize, interface->m_cueSize).x;
+            m_x -= doc->GetDrawingStemWidth(staff->m_drawingStaffSize) / 2;
+        }
+        else {
+            m_x += stemInterface->GetStemDownNW(doc, staff->m_drawingStaffSize, interface->m_cueSize).x;
+            m_x += doc->GetDrawingStemWidth(staff->m_drawingStaffSize) / 2;
+        }
+    }
+    else if (STEMDIRECTION_up == stemDir) {
         m_x += stemInterface->GetStemUpSE(doc, staff->m_drawingStaffSize, interface->m_cueSize).x;
         m_x -= doc->GetDrawingStemWidth(staff->m_drawingStaffSize) / 2;
     }
@@ -2029,21 +2077,15 @@ void BeamElementCoord::UpdateStemLength(
 
     // Since the values were calculated relatively to the element position, adjust them
     int xRel = m_x - m_element->GetDrawingX();
-    // Schenker free-X is the visual center; stem attachment matches CalcStemFunctor.
     if (m_element->Is(NOTE)) {
         Note *note = vrv_cast<Note *>(m_element);
         if (note && note->IsSchenker()) {
             const Doc *doc = vrv_cast<const Doc *>(note->GetFirstAncestor(DOC));
             const Staff *staff = vrv_cast<const Staff *>(note->GetFirstAncestor(STAFF));
             if (doc && staff) {
-                Point p;
-                if (stem->GetDrawingStemDir() == STEMDIRECTION_up) {
-                    p = stemmedInterface->GetStemUpSE(doc, staff->m_drawingStaffSize, note->GetDrawingCueSize());
-                }
-                else {
-                    p = stemmedInterface->GetStemDownNW(doc, staff->m_drawingStaffSize, note->GetDrawingCueSize());
-                }
-                xRel = p.x - note->GetDrawingRadius(doc);
+                xRel = GetSchenkerStemAttachmentRel(
+                    note, doc, staff, stemmedInterface, stem->GetDrawingStemDir(), note->GetDrawingCueSize())
+                           .x;
             }
         }
     }
