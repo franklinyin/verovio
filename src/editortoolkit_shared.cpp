@@ -480,6 +480,9 @@ bool EditorToolkitShared::IsSchenkerNoteDelete(const jsonxx::Object &param)
     if (!this->ParseDeleteAction(param, elementId)) return false;
     Object *element = this->GetElement(elementId);
     if (!element) return false;
+    if (element->Is(BEAM)) {
+        return IsSchenkerBeamElement(dynamic_cast<Beam *>(element));
+    }
     LayerElement *layerElement = dynamic_cast<LayerElement *>(element);
     return layerElement && layerElement->IsSchenker();
 }
@@ -811,8 +814,10 @@ bool EditorToolkitShared::Delete(std::string &elementId)
 
     LayerElement *layerElement = dynamic_cast<LayerElement *>(element);
     const bool schenkerNote = layerElement && layerElement->IsSchenker();
+    const bool schenkerBeam = element->Is(BEAM) && IsSchenkerBeamElement(dynamic_cast<Beam *>(element));
+    const bool schenkerOverlayDelete = schenkerNote || schenkerBeam;
     Staff *schenkerStaff = NULL;
-    if (schenkerNote) {
+    if (schenkerOverlayDelete) {
         schenkerStaff = dynamic_cast<Staff *>(element->GetFirstAncestor(STAFF));
         LogSchenkerStaffGeometry("F-before-schenker-delete", m_doc, schenkerStaff);
     }
@@ -832,7 +837,7 @@ bool EditorToolkitShared::Delete(std::string &elementId)
 
     if (!m_chainedId.empty() && !m_doc->FindDescendantByID(m_chainedId)) m_chainedId = "";
 
-    if (schenkerNote) {
+    if (schenkerOverlayDelete) {
         if (Page *page = m_doc->GetDrawingPage()) {
             page->DeprecateLayout();
         }
