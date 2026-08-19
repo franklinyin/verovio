@@ -12,6 +12,7 @@
 #include <cassert>
 #include <cmath>
 #include <math.h>
+#include <sstream>
 
 //----------------------------------------------------------------------------
 
@@ -1112,6 +1113,33 @@ bool Slur::HasBoundaryOnBeam(bool isStart) const
     return false;
 }
 
+namespace {
+
+bool ParseSchenkerSlurBezierPoints(const std::string &bezier, Point points[4])
+{
+    if (bezier.empty()) return false;
+    std::istringstream stream(bezier);
+    for (int i = 0; i < 4; ++i) {
+        char comma = '\0';
+        if (!(stream >> points[i].x)) return false;
+        if (!(stream >> comma) || comma != ',') return false;
+        if (!(stream >> points[i].y)) return false;
+    }
+    return true;
+}
+
+} // namespace
+
+bool Slur::HasSchenkerCustomBezier() const
+{
+    if (!this->HasBezier()) return false;
+    const LayerElement *start = this->GetStart();
+    const LayerElement *end = this->GetEnd();
+    if (!start || !end || !start->IsSchenker() || !end->IsSchenker()) return false;
+    Point points[4];
+    return ParseSchenkerSlurBezierPoints(this->GetBezier(), points);
+}
+
 void Slur::CalcInitialCurve(const Doc *doc, FloatingCurvePositioner *curve, NearEndCollision *nearEndCollision)
 {
     LayerElement *start = this->GetStart();
@@ -1123,6 +1151,15 @@ void Slur::CalcInitialCurve(const Doc *doc, FloatingCurvePositioner *curve, Near
 
     const char spanningType = curve->GetSpanningType();
     const curvature_CURVEDIR curveDir = this->CalcDrawingCurveDir(spanningType);
+
+    if (this->HasSchenkerCustomBezier()) {
+        Point customPoints[4];
+        ParseSchenkerSlurBezierPoints(this->GetBezier(), customPoints);
+        const int thickness
+            = doc->GetDrawingUnit(staff->m_drawingStaffSize) * doc->GetOptions()->m_slurMidpointThickness.GetValue();
+        curve->UpdateCurveParams(customPoints, thickness, curveDir);
+        return;
+    }
 
     // Calculate endpoints
     assert(curve->HasCachedX12());

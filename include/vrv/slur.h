@@ -144,6 +144,12 @@ public:
     void CalcInitialCurve(const Doc *doc, FloatingCurvePositioner *curve, NearEndCollision *nearEndCollision = NULL);
 
     /**
+     * Schenker overlay slurs store absolute drawing coordinates in @bezier
+     * as "x0,y0 x1,y1 x2,y2 x3,y3" (p0, c1, c2, p3).
+     */
+    bool HasSchenkerCustomBezier() const;
+
+    /**
      * Recalculate the spanned elements of the curve positioner
      */
     void CalcSpannedElements(FloatingCurvePositioner *curve);

@@ -444,6 +444,9 @@ bool View::HasValidTimeSpanningOrder(DeviceContext *dc, Object *element, LayerEl
                 if (start->IsGraceNote() || end->IsGraceNote()) {
                     return true;
                 }
+                if (start->IsSchenker() && end->IsSchenker()) {
+                    return true;
+                }
             }
         }
         else if (element->Is({ OCTAVE, SYL })) {

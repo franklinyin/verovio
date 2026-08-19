@@ -15,6 +15,7 @@
 #include <exception>
 #include <locale>
 #include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -93,6 +94,25 @@ bool IsSchenkerBeamElement(const Beam *beam)
         if (!note || !note->IsSchenker()) return false;
     }
     return true;
+}
+
+bool IsSchenkerSlurableNote(const Note *note)
+{
+    return note && note->IsSchenker();
+}
+
+bool IsSchenkerSlurElement(const Slur *slur)
+{
+    if (!slur) return false;
+    const LayerElement *start = slur->GetStart();
+    const LayerElement *end = slur->GetEnd();
+    return start && end && start->IsSchenker() && end->IsSchenker();
+}
+
+std::string FormatSchenkerSlurBezier(const Point points[4])
+{
+    return StringFormat("%d,%d %d,%d %d,%d %d,%d", points[0].x, points[0].y, points[1].x, points[1].y, points[2].x,
+        points[2].y, points[3].x, points[3].y);
 }
 
 data_STEMDIRECTION ResolveSchenkerStemDir(Note *note, Doc *doc, Staff *staff)
@@ -198,6 +218,12 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
     }
     else if ((action == "flip") && json.has<jsonxx::Object>("param")) {
         skipSetFocus = this->IsSchenkerFlipAction(json.get<jsonxx::Object>("param"));
+    }
+    else if ((action == "slur") && json.has<jsonxx::Object>("param")) {
+        skipSetFocus = this->IsSchenkerSlurAction(json.get<jsonxx::Object>("param"));
+    }
+    else if ((action == "slurBezier") && json.has<jsonxx::Object>("param")) {
+        skipSetFocus = this->IsSchenkerSlurBezierAction(json.get<jsonxx::Object>("param"));
     }
     else if ((action == "chain") && json.has<jsonxx::Array>("param")) {
         skipSetFocus = this->IsSchenkerOverlayChain(json.get<jsonxx::Array>("param"));
@@ -315,6 +341,23 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
             return this->FlipSchenker(elementId);
         }
         LogWarning("Could not parse the flip action");
+    }
+    else if (action == "slur") {
+        std::vector<std::string> noteIds;
+        if (this->ParseSlurAction(json.get<jsonxx::Object>("param"), noteIds)) {
+            this->PrepareUndo();
+            return this->SlurSchenkerNotes(noteIds);
+        }
+        LogWarning("Could not parse the slur action");
+    }
+    else if (action == "slurBezier") {
+        std::string elementId;
+        Point points[4];
+        if (this->ParseSlurBezierAction(json.get<jsonxx::Object>("param"), elementId, points)) {
+            this->PrepareUndo();
+            return this->SetSchenkerSlurBezier(elementId, points);
+        }
+        LogWarning("Could not parse the slurBezier action");
     }
     else if (action == "drag") {
         std::string elementId;
@@ -483,8 +526,63 @@ bool EditorToolkitShared::IsSchenkerNoteDelete(const jsonxx::Object &param)
     if (element->Is(BEAM)) {
         return IsSchenkerBeamElement(dynamic_cast<Beam *>(element));
     }
+    if (element->Is(SLUR)) {
+        return IsSchenkerSlurElement(dynamic_cast<Slur *>(element));
+    }
     LayerElement *layerElement = dynamic_cast<LayerElement *>(element);
     return layerElement && layerElement->IsSchenker();
+}
+
+bool EditorToolkitShared::ParseSlurAction(jsonxx::Object param, std::vector<std::string> &noteIds)
+{
+    noteIds.clear();
+    if (!param.has<jsonxx::Array>("noteIds")) return false;
+    jsonxx::Array ids = param.get<jsonxx::Array>("noteIds");
+    if (ids.size() != 2) return false;
+    for (int i = 0; i < (int)ids.size(); ++i) {
+        if (!ids.has<jsonxx::String>(i)) return false;
+        noteIds.push_back(ids.get<jsonxx::String>(i));
+    }
+    return true;
+}
+
+bool EditorToolkitShared::IsSchenkerSlurAction(const jsonxx::Object &param)
+{
+    std::vector<std::string> noteIds;
+    if (!this->ParseSlurAction(param, noteIds)) return false;
+    for (const std::string &elementId : noteIds) {
+        Object *element = this->GetElement(elementId);
+        Note *note = dynamic_cast<Note *>(element);
+        if (!IsSchenkerSlurableNote(note)) return false;
+    }
+    return true;
+}
+
+bool EditorToolkitShared::ParseSlurBezierAction(
+    jsonxx::Object param, std::string &elementId, Point points[4])
+{
+    if (!param.has<jsonxx::String>("elementId")) return false;
+    elementId = param.get<jsonxx::String>("elementId");
+    if (!param.has<jsonxx::Array>("points")) return false;
+    jsonxx::Array pts = param.get<jsonxx::Array>("points");
+    if (pts.size() != 4) return false;
+    for (int i = 0; i < 4; ++i) {
+        if (!pts.has<jsonxx::Array>(i)) return false;
+        jsonxx::Array pair = pts.get<jsonxx::Array>(i);
+        if (pair.size() != 2 || !pair.has<jsonxx::Number>(0) || !pair.has<jsonxx::Number>(1)) return false;
+        points[i].x = (int)std::lround(pair.get<jsonxx::Number>(0));
+        points[i].y = (int)std::lround(pair.get<jsonxx::Number>(1));
+    }
+    return true;
+}
+
+bool EditorToolkitShared::IsSchenkerSlurBezierAction(const jsonxx::Object &param)
+{
+    std::string elementId;
+    Point points[4];
+    if (!this->ParseSlurBezierAction(param, elementId, points)) return false;
+    Object *element = this->GetElement(elementId);
+    return IsSchenkerSlurElement(dynamic_cast<Slur *>(element));
 }
 
 bool EditorToolkitShared::ParseBeamAction(jsonxx::Object param, std::vector<std::string> &noteIds)
@@ -554,6 +652,12 @@ bool EditorToolkitShared::IsSchenkerOverlayChain(const jsonxx::Array &actions)
         }
         else if (stepAction == "flip") {
             if (!this->IsSchenkerFlipAction(stepParam)) return false;
+        }
+        else if (stepAction == "slur") {
+            if (!this->IsSchenkerSlurAction(stepParam)) return false;
+        }
+        else if (stepAction == "slurBezier") {
+            if (!this->IsSchenkerSlurBezierAction(stepParam)) return false;
         }
         else {
             return false;
@@ -815,7 +919,8 @@ bool EditorToolkitShared::Delete(std::string &elementId)
     LayerElement *layerElement = dynamic_cast<LayerElement *>(element);
     const bool schenkerNote = layerElement && layerElement->IsSchenker();
     const bool schenkerBeam = element->Is(BEAM) && IsSchenkerBeamElement(dynamic_cast<Beam *>(element));
-    const bool schenkerOverlayDelete = schenkerNote || schenkerBeam;
+    const bool schenkerSlur = element->Is(SLUR) && IsSchenkerSlurElement(dynamic_cast<Slur *>(element));
+    const bool schenkerOverlayDelete = schenkerNote || schenkerBeam || schenkerSlur;
     Staff *schenkerStaff = NULL;
     if (schenkerOverlayDelete) {
         schenkerStaff = dynamic_cast<Staff *>(element->GetFirstAncestor(STAFF));
@@ -927,6 +1032,114 @@ bool EditorToolkitShared::BeamSchenkerNotes(const std::vector<std::string> &note
     LogSchenkerStaffGeometry("H-after-schenker-beam", m_doc, staff);
     this->SetEditInfo();
     m_editInfo.import("uuid", beam->GetID());
+    m_editInfo.import("status", "OK");
+    return true;
+}
+
+bool EditorToolkitShared::SlurSchenkerNotes(const std::vector<std::string> &noteIds)
+{
+    if (noteIds.size() != 2) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Slur requires exactly two notes.");
+        return false;
+    }
+
+    std::vector<Note *> notes;
+    for (const std::string &elementId : noteIds) {
+        Object *element = this->GetElement(elementId);
+        Note *note = dynamic_cast<Note *>(element);
+        if (!IsSchenkerSlurableNote(note)) {
+            LogError("Note '%s' is not a Schenker note", elementId.c_str());
+            m_editInfo.import("status", "FAILURE");
+            m_editInfo.import("message", "Selected notes must be Schenker notes.");
+            return false;
+        }
+        notes.push_back(note);
+    }
+
+    std::stable_sort(notes.begin(), notes.end(), [](Note *a, Note *b) {
+        return a->GetDrawingFreeX() < b->GetDrawingFreeX();
+    });
+
+    const std::string startId = notes.front()->GetID();
+    const std::string endId = notes.back()->GetID();
+
+    Object *start = this->GetElement(startId);
+    if (!start) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Could not find start note.");
+        return false;
+    }
+
+    Measure *measure = vrv_cast<Measure *>(start->GetFirstAncestor(MEASURE));
+    if (!measure) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Could not find measure for slur.");
+        return false;
+    }
+
+    Object *childElement = this->PrepareInsertion(measure, "slur");
+    if (!childElement) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Could not create slur.");
+        return false;
+    }
+
+    if (!measure->AddChild(childElement)) {
+        delete childElement;
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Could not insert slur.");
+        return false;
+    }
+
+    TimePointInterface *timePointInterface = childElement->GetTimePointInterface();
+    if (timePointInterface) timePointInterface->SetStartid("#" + startId);
+
+    TimeSpanningInterface *timeSpanningInterface = childElement->GetTimeSpanningInterface();
+    if (timeSpanningInterface) timeSpanningInterface->SetEndid("#" + endId);
+
+    Slur *slur = vrv_cast<Slur *>(childElement);
+    if (slur) {
+        TimeSpanningInterface *ts = slur->GetTimeSpanningInterface();
+        assert(ts);
+        ts->SetStart(notes.front());
+        ts->SetEnd(notes.back());
+    }
+
+    Staff *staff = vrv_cast<Staff *>(notes.front()->GetFirstAncestor(STAFF));
+    if (Page *page = m_doc->GetDrawingPage()) {
+        page->DeprecateLayout();
+    }
+
+    LogSchenkerStaffGeometry("K-after-schenker-slur", m_doc, staff);
+    this->SetEditInfo();
+    m_editInfo.import("uuid", childElement->GetID());
+    m_editInfo.import("status", "OK");
+    return true;
+}
+
+bool EditorToolkitShared::SetSchenkerSlurBezier(const std::string &elementId, const Point points[4])
+{
+    Object *element = this->GetElement(elementId);
+    Slur *slur = dynamic_cast<Slur *>(element);
+    if (!IsSchenkerSlurElement(slur)) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Only Schenker slurs can be edited.");
+        return false;
+    }
+
+    slur->SetBezier(FormatSchenkerSlurBezier(points));
+    Staff *staff = NULL;
+    if (LayerElement *start = slur->GetStart()) {
+        staff = vrv_cast<Staff *>(start->GetFirstAncestor(STAFF));
+    }
+    if (Page *page = m_doc->GetDrawingPage()) {
+        page->DeprecateLayout();
+    }
+
+    LogSchenkerStaffGeometry("L-after-schenker-slur-bezier", m_doc, staff);
+    this->SetEditInfo();
+    m_editInfo.import("uuid", slur->GetID());
     m_editInfo.import("status", "OK");
     return true;
 }
