@@ -2028,7 +2028,26 @@ void BeamElementCoord::UpdateStemLength(
     if (!stem) return;
 
     // Since the values were calculated relatively to the element position, adjust them
-    stem->SetDrawingXRel(m_x - m_element->GetDrawingX());
+    int xRel = m_x - m_element->GetDrawingX();
+    // Schenker free-X is the visual center; stem attachment matches CalcStemFunctor.
+    if (m_element->Is(NOTE)) {
+        Note *note = vrv_cast<Note *>(m_element);
+        if (note && note->IsSchenker()) {
+            const Doc *doc = vrv_cast<const Doc *>(note->GetFirstAncestor(DOC));
+            const Staff *staff = vrv_cast<const Staff *>(note->GetFirstAncestor(STAFF));
+            if (doc && staff) {
+                Point p;
+                if (stem->GetDrawingStemDir() == STEMDIRECTION_up) {
+                    p = stemmedInterface->GetStemUpSE(doc, staff->m_drawingStaffSize, note->GetDrawingCueSize());
+                }
+                else {
+                    p = stemmedInterface->GetStemDownNW(doc, staff->m_drawingStaffSize, note->GetDrawingCueSize());
+                }
+                xRel = p.x - note->GetDrawingRadius(doc);
+            }
+        }
+    }
+    stem->SetDrawingXRel(xRel);
     stem->SetDrawingYRel(y2 - m_element->GetDrawingY());
     const int prevStemLen = stem->GetDrawingStemLen();
     const int newStemLen = y2 - y1;

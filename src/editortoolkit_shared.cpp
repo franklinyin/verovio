@@ -9,14 +9,18 @@
 
 //--------------------------------------------------------------------------------
 
+#include <algorithm>
+#include <climits>
 #include <cmath>
 #include <exception>
 #include <locale>
 #include <set>
 #include <string>
+#include <vector>
 
 //--------------------------------------------------------------------------------
 
+#include "beam.h"
 #include "chord.h"
 #include "clef.h"
 #include "comparison.h"
@@ -33,12 +37,14 @@
 #include "mnum.h"
 #include "note.h"
 #include "page.h"
+#include "preparedatafunctor.h"
 #include "pages.h"
 #include "plistinterface.h"
 #include "rend.h"
 #include "rest.h"
 #include "slur.h"
 #include "staff.h"
+#include "stem.h"
 #include "surface.h"
 #include "symboldef.h"
 #include "system.h"
@@ -56,6 +62,16 @@
 namespace vrv {
 
 namespace {
+
+bool IsSchenkerBeamableNote(const Note *note)
+{
+    if (!note || !note->IsSchenker()) return false;
+    if (note->IsInBeam()) return false;
+    if (note->GetActualDur() != DURATION_8) return false;
+    const Stem *stem = vrv_cast<const Stem *>(note->FindDescendantByType(STEM, 1));
+    if (!stem || (stem->GetVisible() == BOOLEAN_false)) return false;
+    return true;
+}
 
 void LogSchenkerStaffGeometry(const char *stage, Doc *doc, Staff *staff)
 {
@@ -118,6 +134,9 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
     }
     else if ((action == "delete") && json.has<jsonxx::Object>("param")) {
         skipSetFocus = this->IsSchenkerNoteDelete(json.get<jsonxx::Object>("param"));
+    }
+    else if ((action == "beam") && json.has<jsonxx::Object>("param")) {
+        skipSetFocus = this->IsSchenkerBeamAction(json.get<jsonxx::Object>("param"));
     }
     else if ((action == "chain") && json.has<jsonxx::Array>("param")) {
         skipSetFocus = this->IsSchenkerOverlayChain(json.get<jsonxx::Array>("param"));
@@ -219,6 +238,14 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
             return (this->Delete(elementId));
         }
         LogWarning("Could not parse the delete action");
+    }
+    else if (action == "beam") {
+        std::vector<std::string> noteIds;
+        if (this->ParseBeamAction(json.get<jsonxx::Object>("param"), noteIds)) {
+            this->PrepareUndo();
+            return this->BeamSchenkerNotes(noteIds);
+        }
+        LogWarning("Could not parse the beam action");
     }
     else if (action == "drag") {
         std::string elementId;
@@ -388,6 +415,31 @@ bool EditorToolkitShared::IsSchenkerNoteDelete(const jsonxx::Object &param)
     return layerElement && layerElement->IsSchenker();
 }
 
+bool EditorToolkitShared::ParseBeamAction(jsonxx::Object param, std::vector<std::string> &noteIds)
+{
+    noteIds.clear();
+    if (!param.has<jsonxx::Array>("noteIds")) return false;
+    jsonxx::Array ids = param.get<jsonxx::Array>("noteIds");
+    if (ids.size() < 2) return false;
+    for (int i = 0; i < (int)ids.size(); ++i) {
+        if (!ids.has<jsonxx::String>(i)) return false;
+        noteIds.push_back(ids.get<jsonxx::String>(i));
+    }
+    return true;
+}
+
+bool EditorToolkitShared::IsSchenkerBeamAction(const jsonxx::Object &param)
+{
+    std::vector<std::string> noteIds;
+    if (!this->ParseBeamAction(param, noteIds)) return false;
+    for (const std::string &elementId : noteIds) {
+        Object *element = this->GetElement(elementId);
+        Note *note = dynamic_cast<Note *>(element);
+        if (!IsSchenkerBeamableNote(note)) return false;
+    }
+    return true;
+}
+
 bool EditorToolkitShared::IsSchenkerOverlayChain(const jsonxx::Array &actions)
 {
     if (actions.size() < 1) return false;
@@ -402,6 +454,9 @@ bool EditorToolkitShared::IsSchenkerOverlayChain(const jsonxx::Array &actions)
         }
         else if (stepAction == "delete") {
             if (!this->IsSchenkerNoteDelete(stepParam)) return false;
+        }
+        else if (stepAction == "beam") {
+            if (!this->IsSchenkerBeamAction(stepParam)) return false;
         }
         else {
             return false;
@@ -692,6 +747,88 @@ bool EditorToolkitShared::Delete(std::string &elementId)
 
     this->ClearContext();
     this->SetEditInfo();
+    return true;
+}
+
+bool EditorToolkitShared::BeamSchenkerNotes(const std::vector<std::string> &noteIds)
+{
+    if (noteIds.size() < 2) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Beam requires at least two notes.");
+        return false;
+    }
+
+    std::vector<Note *> notes;
+    Layer *layer = NULL;
+    Staff *staff = NULL;
+
+    for (const std::string &elementId : noteIds) {
+        Object *element = this->GetElement(elementId);
+        Note *note = dynamic_cast<Note *>(element);
+        if (!IsSchenkerBeamableNote(note)) {
+            LogError("Note '%s' is not a beamable Schenker flagged note", elementId.c_str());
+            m_editInfo.import("status", "FAILURE");
+            m_editInfo.import("message", "Selected notes must be unbeamed Schenker eighth notes.");
+            return false;
+        }
+
+        Layer *noteLayer = vrv_cast<Layer *>(note->GetFirstAncestor(LAYER));
+        if (!noteLayer) {
+            m_editInfo.import("status", "FAILURE");
+            m_editInfo.import("message", "Could not find layer for selected notes.");
+            return false;
+        }
+
+        if (!layer) {
+            layer = noteLayer;
+            staff = vrv_cast<Staff *>(layer->GetFirstAncestor(STAFF));
+        }
+        else if (layer != noteLayer) {
+            LogError("Schenker beam notes must share the same layer");
+            m_editInfo.import("status", "FAILURE");
+            m_editInfo.import("message", "Selected notes must be on the same staff layer.");
+            return false;
+        }
+
+        notes.push_back(note);
+    }
+
+    std::stable_sort(notes.begin(), notes.end(), [](Note *a, Note *b) {
+        return a->GetDrawingFreeX() < b->GetDrawingFreeX();
+    });
+
+    int minIdx = INT_MAX;
+    for (Note *note : notes) {
+        minIdx = std::min(minIdx, layer->GetChildIndex(note));
+    }
+
+    std::vector<Note *> byLayerIndex = notes;
+    std::stable_sort(byLayerIndex.begin(), byLayerIndex.end(), [layer](Note *a, Note *b) {
+        return layer->GetChildIndex(a) > layer->GetChildIndex(b);
+    });
+    for (Note *note : byLayerIndex) {
+        const int idx = layer->GetChildIndex(note);
+        layer->DetachChild(idx);
+    }
+
+    Beam *beam = new Beam();
+    layer->InsertChild(beam, minIdx);
+    for (Note *note : notes) {
+        beam->AddChild(note);
+    }
+
+    PrepareLayerElementPartsFunctor prepareParts;
+    beam->Process(prepareParts);
+
+    layer->ReorderByXPos();
+    if (Page *page = m_doc->GetDrawingPage()) {
+        page->DeprecateLayout();
+    }
+
+    LogSchenkerStaffGeometry("H-after-schenker-beam", m_doc, staff);
+    this->SetEditInfo();
+    m_editInfo.import("uuid", beam->GetID());
+    m_editInfo.import("status", "OK");
     return true;
 }
 

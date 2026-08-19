@@ -12,6 +12,7 @@
 #include <deque>
 #include <string>
 #include <utility>
+#include <vector>
 
 //--------------------------------------------------------------------------------
 
@@ -54,7 +55,9 @@ protected:
         jsonxx::Object param, std::string &elementName, std::string &elementId, std::string &insertMode);
     bool IsSchenkerNoteInsert(const jsonxx::Object &param) const;
     bool IsSchenkerNoteDelete(const jsonxx::Object &param);
+    bool IsSchenkerBeamAction(const jsonxx::Object &param);
     bool IsSchenkerOverlayChain(const jsonxx::Array &actions);
+    bool ParseBeamAction(jsonxx::Object param, std::vector<std::string> &noteIds);
     bool ParseSchenkerNoteInsertAction(jsonxx::Object param, std::string &staffId, int &loc,
         double &schenkerX, int &dur, bool &voidHead, bool &showStem);
     bool ParseInsertControlAction(
@@ -79,6 +82,7 @@ protected:
      */
     ///@{
     bool Delete(std::string &elementId);
+    bool BeamSchenkerNotes(const std::vector<std::string> &noteIds);
     bool Drag(std::string &elementId, int x, int y);
     bool InsertSchenkerNote(
         const std::string &staffId, int loc, double schenkerX, int dur, bool voidHead, bool showStem);
