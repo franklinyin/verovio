@@ -229,6 +229,9 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
         skipSetFocus = this->IsSchenkerOverlayChain(json.get<jsonxx::Array>("param"));
     }
 
+    const bool schenkerNeonUndoRedo
+        = m_doc->IsNeumeLines() && ((action == "undo") || (action == "redo"));
+
     if (skipSetFocus) {
         Staff *probe = NULL;
         if ((action == "delete") && json.has<jsonxx::Object>("param")) {
@@ -255,7 +258,7 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
         LogSchenkerStaffGeometry("A-before-SetFocus-skipped", m_doc, probe);
     }
 
-    if (!skipSetFocus && (action != "context") && (action != "properties")) {
+    if (!skipSetFocus && !schenkerNeonUndoRedo && (action != "context") && (action != "properties")) {
         m_doc->SetFocus();
     }
 
@@ -272,17 +275,25 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
     // Undo and redo - also without parameter
     if ((action == "undo") || (action == "redo")) {
         this->ClearContext();
+        bool ok = false;
         if (action == "undo") {
-            this->Undo();
+            ok = this->Undo();
         }
         else {
-            this->Redo();
+            ok = this->Redo();
         }
-        m_doc->PrepareData();
-        m_doc->ScoreDefSetCurrentDoc(true);
+        if (m_doc->IsNeumeLines()) {
+            if (Page *page = m_doc->GetDrawingPage()) {
+                page->DeprecateLayout();
+            }
+        }
+        else {
+            m_doc->PrepareData();
+            m_doc->ScoreDefSetCurrentDoc(true);
+        }
         m_undoPrepared = false;
         this->SetEditInfo();
-        return true;
+        return ok;
     }
 
     if (commitOnly) {
@@ -882,6 +893,11 @@ void EditorToolkitShared::SetEditInfo()
     m_editInfo.import("canUndo", this->CanUndo());
     m_editInfo.import("canRedo", this->CanRedo());
     m_editInfo.import("isMensuralMusicOnly", m_doc->IsMensuralMusicOnly());
+    // Neon Schenker scores (neon-neume-line) treat each completed toolkit edit as
+    // one undo step. CMN batch editing still relies on commit to reset m_undoPrepared.
+    if (m_doc->IsNeumeLines()) {
+        m_undoPrepared = false;
+    }
 }
 
 std::string EditorToolkitShared::GetCurrentState()
