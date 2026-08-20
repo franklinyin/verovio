@@ -23,6 +23,7 @@
 #include "options.h"
 #include "slur.h"
 #include "staff.h"
+#include "vrv.h"
 
 namespace vrv {
 
@@ -48,6 +49,17 @@ void View::DrawSlur(DeviceContext *dc, Slur *slur, int x1, int x2, Staff *staff,
     }
     else {
         dc->StartGraphic(slur, "", slur->GetID(), SPANNING);
+    }
+
+    if (slur->HasSchenkerAnalyticalSlur()) {
+        Point devicePoints[4];
+        for (int i = 0; i < 4; ++i) {
+            devicePoints[i] = this->ToDeviceContext(points[i]);
+        }
+        dc->SetCustomGraphicAttributes("bezier-p0", StringFormat("%d,%d", devicePoints[0].x, devicePoints[0].y));
+        dc->SetCustomGraphicAttributes("bezier-c1", StringFormat("%d,%d", devicePoints[1].x, devicePoints[1].y));
+        dc->SetCustomGraphicAttributes("bezier-c2", StringFormat("%d,%d", devicePoints[2].x, devicePoints[2].y));
+        dc->SetCustomGraphicAttributes("bezier-p3", StringFormat("%d,%d", devicePoints[3].x, devicePoints[3].y));
     }
 
     PenStyle penStyle = PEN_SOLID;
