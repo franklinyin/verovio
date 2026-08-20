@@ -222,6 +222,9 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
     else if ((action == "schenkerSlurCurve") && json.has<jsonxx::Object>("param")) {
         skipSetFocus = this->IsSchenkerSlurCurveAction(json.get<jsonxx::Object>("param"));
     }
+    else if ((action == "schenkerSlurReset") && json.has<jsonxx::Object>("param")) {
+        skipSetFocus = this->IsSchenkerSlurResetAction(json.get<jsonxx::Object>("param"));
+    }
     else if ((action == "chain") && json.has<jsonxx::Array>("param")) {
         skipSetFocus = this->IsSchenkerOverlayChain(json.get<jsonxx::Array>("param"));
     }
@@ -364,6 +367,14 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
             return this->SetSchenkerSlurCurve(elementId, points);
         }
         LogWarning("Could not parse the schenkerSlurCurve action");
+    }
+    else if (action == "schenkerSlurReset") {
+        std::string elementId;
+        if (this->ParseFlipAction(json.get<jsonxx::Object>("param"), elementId)) {
+            this->PrepareUndo();
+            return this->ResetSchenkerSlurCurve(elementId);
+        }
+        LogWarning("Could not parse the schenkerSlurReset action");
     }
     else if (action == "drag") {
         std::string elementId;
@@ -608,6 +619,14 @@ bool EditorToolkitShared::IsSchenkerSlurCurveAction(const jsonxx::Object &param)
     return IsSchenkerSlurElement(dynamic_cast<Slur *>(element));
 }
 
+bool EditorToolkitShared::IsSchenkerSlurResetAction(const jsonxx::Object &param)
+{
+    std::string elementId;
+    if (!this->ParseFlipAction(param, elementId)) return false;
+    Object *element = this->GetElement(elementId);
+    return IsSchenkerSlurElement(dynamic_cast<Slur *>(element));
+}
+
 bool EditorToolkitShared::ParseBeamAction(jsonxx::Object param, std::vector<std::string> &noteIds)
 {
     noteIds.clear();
@@ -684,6 +703,9 @@ bool EditorToolkitShared::IsSchenkerOverlayChain(const jsonxx::Array &actions)
         }
         else if (stepAction == "schenkerSlurCurve") {
             if (!this->IsSchenkerSlurCurveAction(stepParam)) return false;
+        }
+        else if (stepAction == "schenkerSlurReset") {
+            if (!this->IsSchenkerSlurResetAction(stepParam)) return false;
         }
         else {
             return false;
@@ -1188,6 +1210,38 @@ bool EditorToolkitShared::SetSchenkerSlurCurve(const std::string &elementId, con
     }
 
     LogSchenkerStaffGeometry("M-after-schenker-slur-curve", m_doc, staff);
+    this->SetEditInfo();
+    m_editInfo.import("uuid", slur->GetID());
+    m_editInfo.import("status", "OK");
+    return true;
+}
+
+bool EditorToolkitShared::ResetSchenkerSlurCurve(const std::string &elementId)
+{
+    Object *element = this->GetElement(elementId);
+    Slur *slur = dynamic_cast<Slur *>(element);
+    if (!IsSchenkerSlurElement(slur)) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Only Schenker slurs can be reset.");
+        return false;
+    }
+
+    Staff *staff = NULL;
+    if (LayerElement *start = slur->GetStart()) {
+        staff = vrv_cast<Staff *>(start->GetFirstAncestor(STAFF));
+    }
+
+    if (slur->HasSchenkerManualGeometry()) {
+        slur->ClearSchenkerManualGeometry();
+        if (Page *page = m_doc->GetDrawingPage()) {
+            page->DeprecateLayout();
+        }
+    }
+
+    if (staff) {
+        LogSchenkerStaffGeometry("N-after-schenker-slur-reset", m_doc, staff);
+    }
+
     this->SetEditInfo();
     m_editInfo.import("uuid", slur->GetID());
     m_editInfo.import("status", "OK");
