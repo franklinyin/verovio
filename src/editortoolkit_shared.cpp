@@ -225,6 +225,9 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
     else if ((action == "slurBezier") && json.has<jsonxx::Object>("param")) {
         skipSetFocus = this->IsSchenkerSlurBezierAction(json.get<jsonxx::Object>("param"));
     }
+    else if ((action == "schenkerSlurCurve") && json.has<jsonxx::Object>("param")) {
+        skipSetFocus = this->IsSchenkerSlurCurveAction(json.get<jsonxx::Object>("param"));
+    }
     else if ((action == "chain") && json.has<jsonxx::Array>("param")) {
         skipSetFocus = this->IsSchenkerOverlayChain(json.get<jsonxx::Array>("param"));
     }
@@ -358,6 +361,15 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
             return this->SetSchenkerSlurBezier(elementId, points);
         }
         LogWarning("Could not parse the slurBezier action");
+    }
+    else if (action == "schenkerSlurCurve") {
+        std::string elementId;
+        Point points[4];
+        if (this->ParseSchenkerSlurCurveAction(json.get<jsonxx::Object>("param"), elementId, points)) {
+            this->PrepareUndo();
+            return this->SetSchenkerSlurCurve(elementId, points);
+        }
+        LogWarning("Could not parse the schenkerSlurCurve action");
     }
     else if (action == "drag") {
         std::string elementId;
@@ -585,6 +597,23 @@ bool EditorToolkitShared::IsSchenkerSlurBezierAction(const jsonxx::Object &param
     return IsSchenkerSlurElement(dynamic_cast<Slur *>(element));
 }
 
+bool EditorToolkitShared::ParseSchenkerSlurCurveAction(
+    jsonxx::Object param, std::string &elementId, Point points[4])
+{
+    // Same wire format as S2 metadata / React draft: four [x,y] pairs in
+    // SVG/device (.page-margin) coordinates.
+    return this->ParseSlurBezierAction(param, elementId, points);
+}
+
+bool EditorToolkitShared::IsSchenkerSlurCurveAction(const jsonxx::Object &param)
+{
+    std::string elementId;
+    Point points[4];
+    if (!this->ParseSchenkerSlurCurveAction(param, elementId, points)) return false;
+    Object *element = this->GetElement(elementId);
+    return IsSchenkerSlurElement(dynamic_cast<Slur *>(element));
+}
+
 bool EditorToolkitShared::ParseBeamAction(jsonxx::Object param, std::vector<std::string> &noteIds)
 {
     noteIds.clear();
@@ -658,6 +687,9 @@ bool EditorToolkitShared::IsSchenkerOverlayChain(const jsonxx::Array &actions)
         }
         else if (stepAction == "slurBezier") {
             if (!this->IsSchenkerSlurBezierAction(stepParam)) return false;
+        }
+        else if (stepAction == "schenkerSlurCurve") {
+            if (!this->IsSchenkerSlurCurveAction(stepParam)) return false;
         }
         else {
             return false;
@@ -1139,6 +1171,44 @@ bool EditorToolkitShared::SetSchenkerSlurBezier(const std::string &elementId, co
     }
 
     LogSchenkerStaffGeometry("L-after-schenker-slur-bezier", m_doc, staff);
+    this->SetEditInfo();
+    m_editInfo.import("uuid", slur->GetID());
+    m_editInfo.import("status", "OK");
+    return true;
+}
+
+bool EditorToolkitShared::SetSchenkerSlurCurve(const std::string &elementId, const Point devicePoints[4])
+{
+    Object *element = this->GetElement(elementId);
+    Slur *slur = dynamic_cast<Slur *>(element);
+    if (!IsSchenkerSlurElement(slur)) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Only Schenker slurs can be edited.");
+        return false;
+    }
+    if (!m_view) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "View is required to convert SVG/device coordinates.");
+        return false;
+    }
+
+    // Exact inverse of S2 export: View::ToDeviceContext (X identity, Y =
+    // pageContentHeight - y). Do not invent extra flips or scale factors.
+    Point logicalPoints[4];
+    for (int i = 0; i < 4; ++i) {
+        logicalPoints[i] = m_view->ToLogical(devicePoints[i]);
+    }
+    slur->SetSchenkerCustomCurve(logicalPoints);
+
+    Staff *staff = NULL;
+    if (LayerElement *start = slur->GetStart()) {
+        staff = vrv_cast<Staff *>(start->GetFirstAncestor(STAFF));
+    }
+    if (Page *page = m_doc->GetDrawingPage()) {
+        page->DeprecateLayout();
+    }
+
+    LogSchenkerStaffGeometry("M-after-schenker-slur-curve", m_doc, staff);
     this->SetEditInfo();
     m_editInfo.import("uuid", slur->GetID());
     m_editInfo.import("status", "OK");

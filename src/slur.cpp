@@ -90,6 +90,7 @@ void Slur::Reset()
     this->ResetLineRendBase();
 
     m_drawingCurveDir = SlurCurveDirection::None;
+    this->ClearSchenkerCustomCurve();
 }
 
 curvature_CURVEDIR Slur::CalcDrawingCurveDir(char spanningType) const
@@ -1148,6 +1149,32 @@ bool Slur::HasSchenkerCustomBezier() const
     return ParseSchenkerSlurBezierPoints(this->GetBezier(), points);
 }
 
+void Slur::ClearSchenkerCustomCurve()
+{
+    m_hasSchenkerCustomCurve = false;
+    m_schenkerCustomPoints[0] = Point(0, 0);
+    m_schenkerCustomPoints[1] = Point(0, 0);
+    m_schenkerCustomPoints[2] = Point(0, 0);
+    m_schenkerCustomPoints[3] = Point(0, 0);
+}
+
+void Slur::SetSchenkerCustomCurve(const Point points[4])
+{
+    m_hasSchenkerCustomCurve = true;
+    m_schenkerCustomPoints[0] = points[0];
+    m_schenkerCustomPoints[1] = points[1];
+    m_schenkerCustomPoints[2] = points[2];
+    m_schenkerCustomPoints[3] = points[3];
+}
+
+void Slur::GetSchenkerCustomCurve(Point points[4]) const
+{
+    points[0] = m_schenkerCustomPoints[0];
+    points[1] = m_schenkerCustomPoints[1];
+    points[2] = m_schenkerCustomPoints[2];
+    points[3] = m_schenkerCustomPoints[3];
+}
+
 namespace {
 
 curvature_CURVEDIR SchenkerSlurCurveDir(const Slur *slur)
@@ -1185,6 +1212,17 @@ void CalcSchenkerInitialCurve(Slur *slur, const Doc *doc, FloatingCurvePositione
         (curveDir == curvature_CURVEDIR_above) ? SlurCurveDirection::Above : SlurCurveDirection::Below);
 
     const int unit = doc->GetDrawingUnit(staff->m_drawingStaffSize);
+    const int thickness = unit * doc->GetOptions()->m_slurMidpointThickness.GetValue();
+
+    // Runtime-edited geometry: use the exact four points and feed the normal
+    // Verovio thick-slur renderer (no MEI / @bezier involvement).
+    if (slur->HasSchenkerCustomCurve()) {
+        Point points[4];
+        slur->GetSchenkerCustomCurve(points);
+        curve->UpdateCurveParams(points, thickness, curveDir);
+        return;
+    }
+
     const int gap = std::max(1, unit / 2);
     const bool below = (curveDir != curvature_CURVEDIR_above);
     const Point p0 = SchenkerSlurAttachment(start, doc, true, below, gap);
@@ -1217,7 +1255,6 @@ void CalcSchenkerInitialCurve(Slur *slur, const Doc *doc, FloatingCurvePositione
     }
 
     Point points[4] = { p0, c1, c2, p3 };
-    const int thickness = unit * doc->GetOptions()->m_slurMidpointThickness.GetValue();
     curve->UpdateCurveParams(points, thickness, curveDir);
 }
 

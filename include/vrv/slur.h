@@ -157,6 +157,18 @@ public:
     bool HasSchenkerCustomBezier() const;
 
     /**
+     * Runtime-only Schenker cubic geometry (P0, C1, C2, P3) in drawing
+     * coordinates. Not serialized to MEI; survives DeprecateLayout until
+     * the Slur object is Reset / recreated from MEI.
+     */
+    ///@{
+    bool HasSchenkerCustomCurve() const { return m_hasSchenkerCustomCurve; }
+    void ClearSchenkerCustomCurve();
+    void SetSchenkerCustomCurve(const Point points[4]);
+    void GetSchenkerCustomCurve(Point points[4]) const;
+    ///@}
+
+    /**
      * Recalculate the spanned elements of the curve positioner
      */
     void CalcSpannedElements(FloatingCurvePositioner *curve);
@@ -251,6 +263,10 @@ private:
      * for s-shaped slurs / mixed direction
      */
     SlurCurveDirection m_drawingCurveDir;
+
+    /** Runtime-only edited Schenker Bézier (drawing coordinates). */
+    bool m_hasSchenkerCustomCurve;
+    Point m_schenkerCustomPoints[4];
 };
 
 } // namespace vrv
