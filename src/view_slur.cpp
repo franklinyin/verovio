@@ -42,7 +42,9 @@ void View::DrawSlur(DeviceContext *dc, Slur *slur, int x1, int x2, Staff *staff,
     curve->GetPoints(points);
 
     // Points are cached in the FloatingCurvePositioner, we also need to adjust x1 and x2
-    this->CalcOffsetBezier(dc, points, spanningType);
+    if (!slur->HasSchenkerManualGeometry()) {
+        this->CalcOffsetBezier(dc, points, spanningType);
+    }
 
     if (graphic) {
         dc->ResumeGraphic(graphic, graphic->GetID());

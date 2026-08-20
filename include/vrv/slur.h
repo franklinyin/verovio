@@ -151,22 +151,25 @@ public:
     bool HasSchenkerAnalyticalSlur() const;
 
     /**
-     * Unused in Phase S1 (handle editing disabled). Kept for later relative
-     * Bézier persistence. Absolute @bezier must not drive Schenker drawing.
+     * Unused legacy hook. Absolute @bezier must not drive Schenker drawing.
      */
     bool HasSchenkerCustomBezier() const;
 
     /**
-     * Runtime-only Schenker cubic geometry (P0, C1, C2, P3) in drawing
-     * coordinates. Not serialized to MEI; survives DeprecateLayout until
-     * the Slur object is Reset / recreated from MEI.
+     * True when standard MEI visual geometry (startho/vo, endho/vo, @bezier) is set.
      */
-    ///@{
-    bool HasSchenkerCustomCurve() const { return m_hasSchenkerCustomCurve; }
-    void ClearSchenkerCustomCurve();
-    void SetSchenkerCustomCurve(const Point points[4]);
-    void GetSchenkerCustomCurve(Point points[4]) const;
-    ///@}
+    bool HasSchenkerManualGeometry() const;
+
+    /**
+     * Clear persisted Schenker visual geometry attributes.
+     */
+    void ClearSchenkerManualGeometry();
+
+    /**
+     * Encode final drawing-space P0/C1/C2/P3 into standard MEI attributes.
+     * Returns false if the slur is not a Schenker analytical slur.
+     */
+    bool PersistSchenkerCurve(const Doc *doc, Staff *staff, const Point finalPoints[4]);
 
     /**
      * Recalculate the spanned elements of the curve positioner
@@ -263,10 +266,6 @@ private:
      * for s-shaped slurs / mixed direction
      */
     SlurCurveDirection m_drawingCurveDir;
-
-    /** Runtime-only edited Schenker Bézier (drawing coordinates). */
-    bool m_hasSchenkerCustomCurve;
-    Point m_schenkerCustomPoints[4];
 };
 
 } // namespace vrv

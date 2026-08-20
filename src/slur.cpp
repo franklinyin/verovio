@@ -90,7 +90,6 @@ void Slur::Reset()
     this->ResetLineRendBase();
 
     m_drawingCurveDir = SlurCurveDirection::None;
-    this->ClearSchenkerCustomCurve();
 }
 
 curvature_CURVEDIR Slur::CalcDrawingCurveDir(char spanningType) const
@@ -1119,63 +1118,37 @@ bool Slur::HasBoundaryOnBeam(bool isStart) const
 
 namespace {
 
-bool ParseSchenkerSlurBezierPoints(const std::string &bezier, Point points[4])
+constexpr int SCHENKER_CURVE_TOLERANCE = 2;
+
+double DrawingDeltaToVu(int delta, int unit, int staffSize)
+{
+    if ((unit == 0) || (staffSize == 0)) return 0.0;
+    return static_cast<double>(delta) * 100.0 / static_cast<double>(unit * staffSize);
+}
+
+int VuToDrawingDelta(double vu, int unit, int staffSize)
+{
+    return static_cast<int>(std::lround(vu * unit * staffSize / 100.0));
+}
+
+void SetMeasurementVu(data_MEASUREMENTSIGNED &target, double vu)
+{
+    target = data_MEASUREMENTSIGNED();
+    target.SetVu(vu);
+}
+
+bool ParseStandardMeiBezier(const std::string &bezier, double &dx1, double &dy1, double &dx2, double &dy2)
 {
     if (bezier.empty()) return false;
+    // Reject the retired experimental absolute format (comma-separated pairs).
+    if (bezier.find(',') != std::string::npos) return false;
     std::istringstream stream(bezier);
-    for (int i = 0; i < 4; ++i) {
-        char comma = '\0';
-        if (!(stream >> points[i].x)) return false;
-        if (!(stream >> comma) || comma != ',') return false;
-        if (!(stream >> points[i].y)) return false;
-    }
+    if (!(stream >> dx1)) return false;
+    if (!(stream >> dy1)) return false;
+    if (!(stream >> dx2)) return false;
+    if (!(stream >> dy2)) return false;
     return true;
 }
-
-} // namespace
-
-bool Slur::HasSchenkerAnalyticalSlur() const
-{
-    const LayerElement *start = this->GetStart();
-    const LayerElement *end = this->GetEnd();
-    return start && end && start->IsSchenker() && end->IsSchenker();
-}
-
-bool Slur::HasSchenkerCustomBezier() const
-{
-    if (!this->HasBezier()) return false;
-    if (!this->HasSchenkerAnalyticalSlur()) return false;
-    Point points[4];
-    return ParseSchenkerSlurBezierPoints(this->GetBezier(), points);
-}
-
-void Slur::ClearSchenkerCustomCurve()
-{
-    m_hasSchenkerCustomCurve = false;
-    m_schenkerCustomPoints[0] = Point(0, 0);
-    m_schenkerCustomPoints[1] = Point(0, 0);
-    m_schenkerCustomPoints[2] = Point(0, 0);
-    m_schenkerCustomPoints[3] = Point(0, 0);
-}
-
-void Slur::SetSchenkerCustomCurve(const Point points[4])
-{
-    m_hasSchenkerCustomCurve = true;
-    m_schenkerCustomPoints[0] = points[0];
-    m_schenkerCustomPoints[1] = points[1];
-    m_schenkerCustomPoints[2] = points[2];
-    m_schenkerCustomPoints[3] = points[3];
-}
-
-void Slur::GetSchenkerCustomCurve(Point points[4]) const
-{
-    points[0] = m_schenkerCustomPoints[0];
-    points[1] = m_schenkerCustomPoints[1];
-    points[2] = m_schenkerCustomPoints[2];
-    points[3] = m_schenkerCustomPoints[3];
-}
-
-namespace {
 
 curvature_CURVEDIR SchenkerSlurCurveDir(const Slur *slur)
 {
@@ -1203,55 +1176,124 @@ Point SchenkerSlurAttachment(const LayerElement *note, const Doc *doc, bool isSt
     return p;
 }
 
+void ComputeSchenkerSymmetricControls(
+    const Point &p0, const Point &p3, const Doc *doc, int unit, bool below, Point &c1, Point &c2)
+{
+    c1 = p0;
+    c2 = p3;
+    const double dx = static_cast<double>(p3.x - p0.x);
+    const double dy = static_cast<double>(p3.y - p0.y);
+    const double length = std::hypot(dx, dy);
+    if (length <= 1.0) return;
+
+    const double ux = dx / length;
+    const double uy = dy / length;
+    double nx = -uy;
+    double ny = ux;
+    if (below) {
+        nx = -nx;
+        ny = -ny;
+    }
+    const double alpha = 0.30;
+    int height = static_cast<int>(std::lround(0.22 * length));
+    height = std::max(height, static_cast<int>(std::lround(1.2 * unit)));
+    height = std::min(height, 3 * unit);
+    const double along = alpha * length;
+    c1.x = static_cast<int>(std::lround(p0.x + along * ux + height * nx));
+    c1.y = static_cast<int>(std::lround(p0.y + along * uy + height * ny));
+    c2.x = static_cast<int>(std::lround(p3.x - along * ux + height * nx));
+    c2.y = static_cast<int>(std::lround(p3.y - along * uy + height * ny));
+}
+
+std::pair<Point, Point> SchenkerSlurBaseEndpoints(Slur *slur, const Doc *doc, Staff *staff)
+{
+    const curvature_CURVEDIR curveDir = SchenkerSlurCurveDir(slur);
+    const int unit = doc->GetDrawingUnit(staff->m_drawingStaffSize);
+    const int gap = std::max(1, unit / 2);
+    const bool below = (curveDir != curvature_CURVEDIR_above);
+    const Point p0 = SchenkerSlurAttachment(slur->GetStart(), doc, true, below, gap);
+    const Point p3 = SchenkerSlurAttachment(slur->GetEnd(), doc, false, below, gap);
+    return { p0, p3 };
+}
+
+void ApplySchenkerEndpointOffsetsFromMei(
+    const Slur *slur, int unit, int staffSize, const Point &baseP0, const Point &baseP3, Point &p0, Point &p3)
+{
+    p0 = baseP0;
+    p3 = baseP3;
+    const OffsetSpanningInterface *interface = slur->GetOffsetSpanningInterface();
+    assert(interface);
+
+    if (interface->HasStartho()) {
+        p0.x += VuToDrawingDelta(interface->GetStartho().GetVu(), unit, staffSize);
+    }
+    if (interface->HasStartvo()) {
+        p0.y += VuToDrawingDelta(interface->GetStartvo().GetVu(), unit, staffSize);
+    }
+    if (interface->HasEndho()) {
+        p3.x += VuToDrawingDelta(interface->GetEndho().GetVu(), unit, staffSize);
+    }
+    if (interface->HasEndvo()) {
+        p3.y += VuToDrawingDelta(interface->GetEndvo().GetVu(), unit, staffSize);
+    }
+}
+
+void ComputeSchenkerDefaultPoints(Slur *slur, const Doc *doc, Staff *staff, Point points[4])
+{
+    const curvature_CURVEDIR curveDir = SchenkerSlurCurveDir(slur);
+    const int unit = doc->GetDrawingUnit(staff->m_drawingStaffSize);
+    const bool below = (curveDir != curvature_CURVEDIR_above);
+    const auto [baseP0, baseP3] = SchenkerSlurBaseEndpoints(slur, doc, staff);
+    points[0] = baseP0;
+    points[3] = baseP3;
+    ComputeSchenkerSymmetricControls(baseP0, baseP3, doc, unit, below, points[1], points[2]);
+}
+
+bool PointsMatchWithinTolerance(const Point a[4], const Point b[4], int tolerance = SCHENKER_CURVE_TOLERANCE)
+{
+    for (int i = 0; i < 4; ++i) {
+        if (std::abs(a[i].x - b[i].x) > tolerance) return false;
+        if (std::abs(a[i].y - b[i].y) > tolerance) return false;
+    }
+    return true;
+}
+
 void CalcSchenkerInitialCurve(Slur *slur, const Doc *doc, FloatingCurvePositioner *curve, Staff *staff)
 {
-    LayerElement *start = slur->GetStart();
-    LayerElement *end = slur->GetEnd();
     const curvature_CURVEDIR curveDir = SchenkerSlurCurveDir(slur);
     slur->SetDrawingCurveDir(
         (curveDir == curvature_CURVEDIR_above) ? SlurCurveDirection::Above : SlurCurveDirection::Below);
 
     const int unit = doc->GetDrawingUnit(staff->m_drawingStaffSize);
+    const int meiUnit = doc->GetOptions()->m_unit.GetValue();
     const int thickness = unit * doc->GetOptions()->m_slurMidpointThickness.GetValue();
-
-    // Runtime-edited geometry: use the exact four points and feed the normal
-    // Verovio thick-slur renderer (no MEI / @bezier involvement).
-    if (slur->HasSchenkerCustomCurve()) {
-        Point points[4];
-        slur->GetSchenkerCustomCurve(points);
-        curve->UpdateCurveParams(points, thickness, curveDir);
-        return;
-    }
-
-    const int gap = std::max(1, unit / 2);
     const bool below = (curveDir != curvature_CURVEDIR_above);
-    const Point p0 = SchenkerSlurAttachment(start, doc, true, below, gap);
-    const Point p3 = SchenkerSlurAttachment(end, doc, false, below, gap);
 
-    const double dx = static_cast<double>(p3.x - p0.x);
-    const double dy = static_cast<double>(p3.y - p0.y);
-    const double length = std::hypot(dx, dy);
-    Point c1 = p0;
-    Point c2 = p3;
-    if (length > 1.0) {
-        const double ux = dx / length;
-        const double uy = dy / length;
-        // Rotate (ux, uy) 90° CCW: above a rightward chord when Y increases up.
-        double nx = -uy;
-        double ny = ux;
-        if (below) {
-            nx = -nx;
-            ny = -ny;
+    const auto [baseP0, baseP3] = SchenkerSlurBaseEndpoints(slur, doc, staff);
+    Point p0 = baseP0;
+    Point p3 = baseP3;
+    Point c1;
+    Point c2;
+
+    if (slur->HasSchenkerManualGeometry()) {
+        ApplySchenkerEndpointOffsetsFromMei(slur, meiUnit, staff->m_drawingStaffSize, baseP0, baseP3, p0, p3);
+
+        double dx1 = 0.0;
+        double dy1 = 0.0;
+        double dx2 = 0.0;
+        double dy2 = 0.0;
+        if (slur->HasBezier() && ParseStandardMeiBezier(slur->GetBezier(), dx1, dy1, dx2, dy2)) {
+            c1.x = p0.x + VuToDrawingDelta(dx1, meiUnit, staff->m_drawingStaffSize);
+            c1.y = p0.y + VuToDrawingDelta(dy1, meiUnit, staff->m_drawingStaffSize);
+            c2.x = p3.x + VuToDrawingDelta(dx2, meiUnit, staff->m_drawingStaffSize);
+            c2.y = p3.y + VuToDrawingDelta(dy2, meiUnit, staff->m_drawingStaffSize);
         }
-        const double alpha = 0.30;
-        int height = static_cast<int>(std::lround(0.22 * length));
-        height = std::max(height, static_cast<int>(std::lround(1.2 * unit)));
-        height = std::min(height, 3 * unit);
-        const double along = alpha * length;
-        c1.x = static_cast<int>(std::lround(p0.x + along * ux + height * nx));
-        c1.y = static_cast<int>(std::lround(p0.y + along * uy + height * ny));
-        c2.x = static_cast<int>(std::lround(p3.x - along * ux + height * nx));
-        c2.y = static_cast<int>(std::lround(p3.y - along * uy + height * ny));
+        else {
+            ComputeSchenkerSymmetricControls(p0, p3, doc, unit, below, c1, c2);
+        }
+    }
+    else {
+        ComputeSchenkerSymmetricControls(baseP0, baseP3, doc, unit, below, c1, c2);
     }
 
     Point points[4] = { p0, c1, c2, p3 };
@@ -1259,6 +1301,138 @@ void CalcSchenkerInitialCurve(Slur *slur, const Doc *doc, FloatingCurvePositione
 }
 
 } // namespace
+
+bool Slur::HasSchenkerAnalyticalSlur() const
+{
+    const LayerElement *start = this->GetStart();
+    const LayerElement *end = this->GetEnd();
+    return start && end && start->IsSchenker() && end->IsSchenker();
+}
+
+bool Slur::HasSchenkerCustomBezier() const
+{
+    if (!this->HasBezier()) return false;
+    if (!this->HasSchenkerAnalyticalSlur()) return false;
+    // Only the retired absolute format used commas.
+    return this->GetBezier().find(',') != std::string::npos;
+}
+
+bool Slur::HasSchenkerManualGeometry() const
+{
+    if (!this->HasSchenkerAnalyticalSlur()) return false;
+    const OffsetSpanningInterface *interface = this->GetOffsetSpanningInterface();
+    assert(interface);
+    if (interface->HasStartho() || interface->HasStartvo() || interface->HasEndho() || interface->HasEndvo()) {
+        return true;
+    }
+    if (this->HasBezier()) {
+        double dx1 = 0.0;
+        double dy1 = 0.0;
+        double dx2 = 0.0;
+        double dy2 = 0.0;
+        return ParseStandardMeiBezier(this->GetBezier(), dx1, dy1, dx2, dy2);
+    }
+    return false;
+}
+
+void Slur::ClearSchenkerManualGeometry()
+{
+    this->SetStartho(data_MEASUREMENTSIGNED());
+    this->SetStartvo(data_MEASUREMENTSIGNED());
+    this->SetEndho(data_MEASUREMENTSIGNED());
+    this->SetEndvo(data_MEASUREMENTSIGNED());
+    this->SetBezier("");
+}
+
+bool Slur::PersistSchenkerCurve(const Doc *doc, Staff *staff, const Point finalPoints[4])
+{
+    if (!this->HasSchenkerAnalyticalSlur() || !doc || !staff) return false;
+
+    Point defaultPoints[4];
+    ComputeSchenkerDefaultPoints(this, doc, staff, defaultPoints);
+    if (PointsMatchWithinTolerance(finalPoints, defaultPoints)) {
+        this->ClearSchenkerManualGeometry();
+        return true;
+    }
+
+    const int meiUnit = doc->GetOptions()->m_unit.GetValue();
+    const int staffSize = staff->m_drawingStaffSize;
+    const int unit = doc->GetDrawingUnit(staffSize);
+    const bool below = (SchenkerSlurCurveDir(this) != curvature_CURVEDIR_above);
+
+    const auto [baseP0, baseP3] = SchenkerSlurBaseEndpoints(this, doc, staff);
+    const Point &p0 = finalPoints[0];
+    const Point &c1 = finalPoints[1];
+    const Point &c2 = finalPoints[2];
+    const Point &p3 = finalPoints[3];
+
+    data_MEASUREMENTSIGNED measurement;
+
+    const int startHoDelta = p0.x - baseP0.x;
+    const int startVoDelta = p0.y - baseP0.y;
+    const int endHoDelta = p3.x - baseP3.x;
+    const int endVoDelta = p3.y - baseP3.y;
+
+    if (std::abs(startHoDelta) > SCHENKER_CURVE_TOLERANCE) {
+        SetMeasurementVu(measurement, DrawingDeltaToVu(startHoDelta, meiUnit, staffSize));
+        this->SetStartho(measurement);
+    }
+    else {
+        this->SetStartho(data_MEASUREMENTSIGNED());
+    }
+
+    if (std::abs(startVoDelta) > SCHENKER_CURVE_TOLERANCE) {
+        SetMeasurementVu(measurement, DrawingDeltaToVu(startVoDelta, meiUnit, staffSize));
+        this->SetStartvo(measurement);
+    }
+    else {
+        this->SetStartvo(data_MEASUREMENTSIGNED());
+    }
+
+    if (std::abs(endHoDelta) > SCHENKER_CURVE_TOLERANCE) {
+        SetMeasurementVu(measurement, DrawingDeltaToVu(endHoDelta, meiUnit, staffSize));
+        this->SetEndho(measurement);
+    }
+    else {
+        this->SetEndho(data_MEASUREMENTSIGNED());
+    }
+
+    if (std::abs(endVoDelta) > SCHENKER_CURVE_TOLERANCE) {
+        SetMeasurementVu(measurement, DrawingDeltaToVu(endVoDelta, meiUnit, staffSize));
+        this->SetEndvo(measurement);
+    }
+    else {
+        this->SetEndvo(data_MEASUREMENTSIGNED());
+    }
+
+    Point defaultControls;
+    Point defaultControlEnd;
+    ComputeSchenkerSymmetricControls(p0, p3, doc, unit, below, defaultControls, defaultControlEnd);
+
+    const int c1Dx = c1.x - p0.x;
+    const int c1Dy = c1.y - p0.y;
+    const int c2Dx = c2.x - p3.x;
+    const int c2Dy = c2.y - p3.y;
+    const int defaultC1Dx = defaultControls.x - p0.x;
+    const int defaultC1Dy = defaultControls.y - p0.y;
+    const int defaultC2Dx = defaultControlEnd.x - p3.x;
+    const int defaultC2Dy = defaultControlEnd.y - p3.y;
+
+    if ((std::abs(c1Dx - defaultC1Dx) > SCHENKER_CURVE_TOLERANCE)
+        || (std::abs(c1Dy - defaultC1Dy) > SCHENKER_CURVE_TOLERANCE)
+        || (std::abs(c2Dx - defaultC2Dx) > SCHENKER_CURVE_TOLERANCE)
+        || (std::abs(c2Dy - defaultC2Dy) > SCHENKER_CURVE_TOLERANCE)) {
+        const std::string bezier = StringFormat("%g %g %g %g", DrawingDeltaToVu(c1Dx, meiUnit, staffSize),
+            DrawingDeltaToVu(c1Dy, meiUnit, staffSize), DrawingDeltaToVu(c2Dx, meiUnit, staffSize),
+            DrawingDeltaToVu(c2Dy, meiUnit, staffSize));
+        this->SetBezier(bezier);
+    }
+    else {
+        this->SetBezier("");
+    }
+
+    return true;
+}
 
 void Slur::CalcInitialCurve(const Doc *doc, FloatingCurvePositioner *curve, NearEndCollision *nearEndCollision)
 {

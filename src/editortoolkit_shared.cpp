@@ -109,12 +109,6 @@ bool IsSchenkerSlurElement(const Slur *slur)
     return start && end && start->IsSchenker() && end->IsSchenker();
 }
 
-std::string FormatSchenkerSlurBezier(const Point points[4])
-{
-    return StringFormat("%d,%d %d,%d %d,%d %d,%d", points[0].x, points[0].y, points[1].x, points[1].y, points[2].x,
-        points[2].y, points[3].x, points[3].y);
-}
-
 data_STEMDIRECTION ResolveSchenkerStemDir(Note *note, Doc *doc, Staff *staff)
 {
     if (note->HasStemDir()) return note->GetStemDir();
@@ -1151,32 +1145,6 @@ bool EditorToolkitShared::SlurSchenkerNotes(const std::vector<std::string> &note
     return true;
 }
 
-bool EditorToolkitShared::SetSchenkerSlurBezier(const std::string &elementId, const Point points[4])
-{
-    Object *element = this->GetElement(elementId);
-    Slur *slur = dynamic_cast<Slur *>(element);
-    if (!IsSchenkerSlurElement(slur)) {
-        m_editInfo.import("status", "FAILURE");
-        m_editInfo.import("message", "Only Schenker slurs can be edited.");
-        return false;
-    }
-
-    slur->SetBezier(FormatSchenkerSlurBezier(points));
-    Staff *staff = NULL;
-    if (LayerElement *start = slur->GetStart()) {
-        staff = vrv_cast<Staff *>(start->GetFirstAncestor(STAFF));
-    }
-    if (Page *page = m_doc->GetDrawingPage()) {
-        page->DeprecateLayout();
-    }
-
-    LogSchenkerStaffGeometry("L-after-schenker-slur-bezier", m_doc, staff);
-    this->SetEditInfo();
-    m_editInfo.import("uuid", slur->GetID());
-    m_editInfo.import("status", "OK");
-    return true;
-}
-
 bool EditorToolkitShared::SetSchenkerSlurCurve(const std::string &elementId, const Point devicePoints[4])
 {
     Object *element = this->GetElement(elementId);
@@ -1198,12 +1166,23 @@ bool EditorToolkitShared::SetSchenkerSlurCurve(const std::string &elementId, con
     for (int i = 0; i < 4; ++i) {
         logicalPoints[i] = m_view->ToLogical(devicePoints[i]);
     }
-    slur->SetSchenkerCustomCurve(logicalPoints);
 
     Staff *staff = NULL;
     if (LayerElement *start = slur->GetStart()) {
         staff = vrv_cast<Staff *>(start->GetFirstAncestor(STAFF));
     }
+    if (!staff) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Could not find staff for slur curve edit.");
+        return false;
+    }
+
+    if (!slur->PersistSchenkerCurve(m_doc, staff, logicalPoints)) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Could not persist Schenker slur geometry.");
+        return false;
+    }
+
     if (Page *page = m_doc->GetDrawingPage()) {
         page->DeprecateLayout();
     }
@@ -1213,6 +1192,21 @@ bool EditorToolkitShared::SetSchenkerSlurCurve(const std::string &elementId, con
     m_editInfo.import("uuid", slur->GetID());
     m_editInfo.import("status", "OK");
     return true;
+}
+
+bool EditorToolkitShared::SetSchenkerSlurBezier(const std::string &elementId, const Point points[4])
+{
+    Object *element = this->GetElement(elementId);
+    Slur *slur = dynamic_cast<Slur *>(element);
+    if (!IsSchenkerSlurElement(slur)) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Only Schenker slurs can be edited.");
+        return false;
+    }
+
+    m_editInfo.import("status", "FAILURE");
+    m_editInfo.import("message", "The retired absolute slurBezier format is no longer supported.");
+    return false;
 }
 
 bool EditorToolkitShared::FlipSchenker(const std::string &elementId)

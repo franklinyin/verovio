@@ -4875,6 +4875,26 @@ bool MEIInput::ReadSectionChildren(Object *parent, pugi::xml_node parentNode)
             }
             success = this->ReadStaff(unmeasured, current);
         }
+        // measure-level control elements exported as siblings of <staff> in neon-neume-line sections
+        else if (std::string(current.name()) == "slur") {
+            if (!unmeasured) {
+                if (parent->Is(SECTION)) {
+                    if (m_doc->IsNeumeLines()) {
+                        unmeasured = new Measure(NEUMELINE);
+                    }
+                    else {
+                        unmeasured = new Measure(UNMEASURED);
+                        m_doc->SetMensuralMusicOnly(BOOLEAN_true);
+                    }
+                    parent->AddChild(unmeasured);
+                }
+                else {
+                    LogError("Unmeasured music within editorial markup is currently not supported");
+                    return false;
+                }
+            }
+            success = this->ReadSlur(unmeasured, current);
+        }
         else if (std::string(current.name()) == "measure") {
             // we should not mix measured and unmeasured music within a system...
             assert(!unmeasured);
