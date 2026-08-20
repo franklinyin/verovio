@@ -1104,6 +1104,7 @@ bool EditorToolkitShared::SlurSchenkerNotes(const std::vector<std::string> &note
         assert(ts);
         ts->SetStart(notes.front());
         ts->SetEnd(notes.back());
+        slur->SetCurvedir(curvature_CURVEDIR_below);
     }
 
     Staff *staff = vrv_cast<Staff *>(notes.front()->GetFirstAncestor(STAFF));

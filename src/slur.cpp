@@ -9,6 +9,7 @@
 
 //----------------------------------------------------------------------------
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <math.h>
@@ -22,11 +23,13 @@
 #include "doc.h"
 #include "elementpart.h"
 #include "findlayerelementsfunctor.h"
+#include "floatingobject.h"
 #include "ftrem.h"
 #include "functor.h"
 #include "layer.h"
 #include "layerelement.h"
 #include "note.h"
+#include "options.h"
 #include "staff.h"
 #include "system.h"
 #include "tuplet.h"
@@ -1130,15 +1133,95 @@ bool ParseSchenkerSlurBezierPoints(const std::string &bezier, Point points[4])
 
 } // namespace
 
+bool Slur::HasSchenkerAnalyticalSlur() const
+{
+    const LayerElement *start = this->GetStart();
+    const LayerElement *end = this->GetEnd();
+    return start && end && start->IsSchenker() && end->IsSchenker();
+}
+
 bool Slur::HasSchenkerCustomBezier() const
 {
     if (!this->HasBezier()) return false;
-    const LayerElement *start = this->GetStart();
-    const LayerElement *end = this->GetEnd();
-    if (!start || !end || !start->IsSchenker() || !end->IsSchenker()) return false;
+    if (!this->HasSchenkerAnalyticalSlur()) return false;
     Point points[4];
     return ParseSchenkerSlurBezierPoints(this->GetBezier(), points);
 }
+
+namespace {
+
+curvature_CURVEDIR SchenkerSlurCurveDir(const Slur *slur)
+{
+    if (slur->HasCurvedir() && (slur->GetCurvedir() != curvature_CURVEDIR_mixed)) {
+        return slur->GetCurvedir();
+    }
+    return curvature_CURVEDIR_below;
+}
+
+Point SchenkerSlurAttachment(const LayerElement *note, const Doc *doc, bool isStart, bool below, int gap)
+{
+    const int radius = std::max(1, note->GetDrawingRadius(doc));
+    const int inset = radius / 3;
+    Point p;
+    if (note->HasSelfBB()) {
+        p.x = isStart ? (note->GetSelfRight() - inset) : (note->GetSelfLeft() + inset);
+        p.y = below ? (note->GetSelfBottom() - gap) : (note->GetSelfTop() + gap);
+    }
+    else {
+        const int cx = note->GetDrawingX();
+        const int cy = note->GetDrawingY();
+        p.x = isStart ? (cx + radius - inset) : (cx - radius + inset);
+        p.y = below ? (cy - radius - gap) : (cy + radius + gap);
+    }
+    return p;
+}
+
+void CalcSchenkerInitialCurve(Slur *slur, const Doc *doc, FloatingCurvePositioner *curve, Staff *staff)
+{
+    LayerElement *start = slur->GetStart();
+    LayerElement *end = slur->GetEnd();
+    const curvature_CURVEDIR curveDir = SchenkerSlurCurveDir(slur);
+    slur->SetDrawingCurveDir(
+        (curveDir == curvature_CURVEDIR_above) ? SlurCurveDirection::Above : SlurCurveDirection::Below);
+
+    const int unit = doc->GetDrawingUnit(staff->m_drawingStaffSize);
+    const int gap = std::max(1, unit / 2);
+    const bool below = (curveDir != curvature_CURVEDIR_above);
+    const Point p0 = SchenkerSlurAttachment(start, doc, true, below, gap);
+    const Point p3 = SchenkerSlurAttachment(end, doc, false, below, gap);
+
+    const double dx = static_cast<double>(p3.x - p0.x);
+    const double dy = static_cast<double>(p3.y - p0.y);
+    const double length = std::hypot(dx, dy);
+    Point c1 = p0;
+    Point c2 = p3;
+    if (length > 1.0) {
+        const double ux = dx / length;
+        const double uy = dy / length;
+        // Rotate (ux, uy) 90° CCW: above a rightward chord when Y increases up.
+        double nx = -uy;
+        double ny = ux;
+        if (below) {
+            nx = -nx;
+            ny = -ny;
+        }
+        const double alpha = 0.30;
+        int height = static_cast<int>(std::lround(0.22 * length));
+        height = std::max(height, static_cast<int>(std::lround(1.2 * unit)));
+        height = std::min(height, 3 * unit);
+        const double along = alpha * length;
+        c1.x = static_cast<int>(std::lround(p0.x + along * ux + height * nx));
+        c1.y = static_cast<int>(std::lround(p0.y + along * uy + height * ny));
+        c2.x = static_cast<int>(std::lround(p3.x - along * ux + height * nx));
+        c2.y = static_cast<int>(std::lround(p3.y - along * uy + height * ny));
+    }
+
+    Point points[4] = { p0, c1, c2, p3 };
+    const int thickness = unit * doc->GetOptions()->m_slurMidpointThickness.GetValue();
+    curve->UpdateCurveParams(points, thickness, curveDir);
+}
+
+} // namespace
 
 void Slur::CalcInitialCurve(const Doc *doc, FloatingCurvePositioner *curve, NearEndCollision *nearEndCollision)
 {
@@ -1152,12 +1235,8 @@ void Slur::CalcInitialCurve(const Doc *doc, FloatingCurvePositioner *curve, Near
     const char spanningType = curve->GetSpanningType();
     const curvature_CURVEDIR curveDir = this->CalcDrawingCurveDir(spanningType);
 
-    if (this->HasSchenkerCustomBezier()) {
-        Point customPoints[4];
-        ParseSchenkerSlurBezierPoints(this->GetBezier(), customPoints);
-        const int thickness
-            = doc->GetDrawingUnit(staff->m_drawingStaffSize) * doc->GetOptions()->m_slurMidpointThickness.GetValue();
-        curve->UpdateCurveParams(customPoints, thickness, curveDir);
+    if (this->HasSchenkerAnalyticalSlur()) {
+        CalcSchenkerInitialCurve(this, doc, curve, staff);
         return;
     }
 

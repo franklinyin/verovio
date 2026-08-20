@@ -138,7 +138,7 @@ void AdjustSlursFunctor::AdjustSlur(int unit) const
     assert(m_currentCurve);
     assert(m_currentSlur);
 
-    if (m_currentSlur->HasSchenkerCustomBezier()) {
+    if (m_currentSlur->HasSchenkerAnalyticalSlur()) {
         NearEndCollision nearEndCollision;
         m_currentSlur->CalcInitialCurve(m_doc, m_currentCurve, &nearEndCollision);
         return;

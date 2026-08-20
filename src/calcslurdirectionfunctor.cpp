@@ -40,6 +40,12 @@ FunctorCode CalcSlurDirectionFunctor::VisitSlur(Slur *slur)
     }
     if (slur->HasDrawingCurveDir()) return FUNCTOR_CONTINUE;
 
+    // Schenker analytical slurs default below; ignore stem / collision heuristics.
+    if (slur->HasSchenkerAnalyticalSlur()) {
+        slur->SetDrawingCurveDir(SlurCurveDirection::Below);
+        return FUNCTOR_CONTINUE;
+    }
+
     // Retrieve boundary
     LayerElement *start = slur->GetStart();
     LayerElement *end = slur->GetEnd();

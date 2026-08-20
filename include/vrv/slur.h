@@ -144,8 +144,15 @@ public:
     void CalcInitialCurve(const Doc *doc, FloatingCurvePositioner *curve, NearEndCollision *nearEndCollision = NULL);
 
     /**
-     * Schenker overlay slurs store absolute drawing coordinates in @bezier
-     * as "x0,y0 x1,y1 x2,y2 x3,y3" (p0, c1, c2, p3).
+     * True when both endpoints are Schenker analytical notes.
+     * These slurs use a deterministic symmetric Bézier, not conventional
+     * phrase-slur engraving heuristics.
+     */
+    bool HasSchenkerAnalyticalSlur() const;
+
+    /**
+     * Unused in Phase S1 (handle editing disabled). Kept for later relative
+     * Bézier persistence. Absolute @bezier must not drive Schenker drawing.
      */
     bool HasSchenkerCustomBezier() const;
 
