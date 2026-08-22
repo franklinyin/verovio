@@ -1047,6 +1047,18 @@ void SvgDeviceContext::StartText(int x, int y, data_HORIZONTALALIGNMENT alignmen
     }
 }
 
+void SvgDeviceContext::SetCurrentNodeFontSize(int pointSize)
+{
+    if (!m_currentNode || (pointSize <= 0)) return;
+    const std::string value = StringFormat("%dpx", pointSize);
+    if (pugi::xml_attribute attr = m_currentNode.attribute("font-size")) {
+        attr.set_value(value.c_str());
+    }
+    else {
+        m_currentNode.append_attribute("font-size") = value.c_str();
+    }
+}
+
 void SvgDeviceContext::MoveTextTo(int x, int y, data_HORIZONTALALIGNMENT alignment)
 {
     m_currentNode.append_attribute("x") = x;

@@ -9,13 +9,16 @@
 
 //----------------------------------------------------------------------------
 
+#include <algorithm>
 #include <cassert>
+#include <climits>
 #include <sstream>
 
 //----------------------------------------------------------------------------
 
 #include "annotscore.h"
 #include "arpeg.h"
+#include "beam.h"
 #include "bboxdevicecontext.h"
 #include "beamspan.h"
 #include "bracketspan.h"
@@ -55,6 +58,7 @@
 #include "staff.h"
 #include "syl.h"
 #include "symboldef.h"
+#include "svgdevicecontext.h"
 #include "system.h"
 #include "tempo.h"
 #include "text.h"
@@ -109,8 +113,13 @@ void View::DrawControlElement(DeviceContext *dc, ControlElement *element, Measur
     else if (element->Is(DIR)) {
         Dir *dir = vrv_cast<Dir *>(element);
         assert(dir);
-        this->DrawControlElementText(dc, dir, measure, system);
-        system->AddToDrawingListIfNecessary(dir);
+        if (dir->GetType() == "schenker-label") {
+            this->DrawSchenkerLabel(dc, dir, measure, system);
+        }
+        else {
+            this->DrawControlElementText(dc, dir, measure, system);
+            system->AddToDrawingListIfNecessary(dir);
+        }
     }
     else if (element->Is(DYNAM)) {
         Dynam *dynam = vrv_cast<Dynam *>(element);
@@ -2143,6 +2152,98 @@ void View::DrawFing(DeviceContext *dc, Fing *fing, Measure *measure, System *sys
     }
 
     dc->EndGraphic(fing, this);
+}
+
+void View::DrawSchenkerLabel(DeviceContext *dc, Dir *dir, Measure *measure, System *system)
+{
+    assert(dc);
+    assert(dir);
+    assert(measure);
+    assert(system);
+
+    LayerElement *start = dir->GetStart();
+    if (!start && dir->HasStartid()) {
+        const std::string id = ExtractIDFragment(dir->GetStartid());
+        start = dynamic_cast<LayerElement *>(m_doc->FindDescendantByID(id));
+        if (start && !dir->GetStart()) {
+            dir->SetStart(start);
+        }
+    }
+    Note *note = dynamic_cast<Note *>(start);
+    if (!note || !note->IsSchenker()) return;
+
+    Staff *staff = vrv_cast<Staff *>(note->GetFirstAncestor(STAFF));
+    if (!staff) return;
+
+    const Staff *upperStaff = NULL;
+    int maxStaffY = INT_MIN;
+    if (Page *page = m_doc->GetDrawingPage()) {
+        ListOfObjects staves = page->FindAllDescendantsByType(STAFF);
+        for (Object *object : staves) {
+            Staff *candidate = vrv_cast<Staff *>(object);
+            if (!candidate) continue;
+            const int staffY = candidate->GetDrawingY();
+            if (!upperStaff || (staffY > maxStaffY)) {
+                maxStaffY = staffY;
+                upperStaff = candidate;
+            }
+        }
+    }
+    const bool above = (staff == upperStaff);
+
+    StaffAlignment *alignment = NULL;
+    for (int i = 0; i < system->m_systemAligner.GetChildCount(); ++i) {
+        StaffAlignment *candidate = dynamic_cast<StaffAlignment *>(system->m_systemAligner.GetChild(i));
+        if (candidate && candidate->GetStaff() == staff) {
+            alignment = candidate;
+            break;
+        }
+    }
+    if (alignment) {
+        alignment->SetCurrentFloatingPositioner(dir, note, staff, SPANNING_START_END);
+    }
+
+    const int staffSize = staff->m_drawingStaffSize;
+    const int unit = m_doc->GetDrawingUnit(staffSize);
+    const int staffTop = staff->GetDrawingY();
+    const int staffBottom = staffTop - (2 * unit * (staff->m_drawingLines - 1));
+    const int padding = (3 * unit) / 2;
+
+    // L1A: outside the staff only. Stem/flag/beam clearance is L1B.
+    int x = note->GetDrawingX();
+    int y = above ? (staffTop + padding) : (staffBottom - padding);
+
+    FontInfo labelFont;
+    if (!dc->UseGlobalStyling()) {
+        labelFont.SetFaceName(m_doc->GetResources().GetTextFont());
+        labelFont.SetStyle(FONTSTYLE_normal);
+    }
+    labelFont.SetPointSize(m_doc->GetDrawingLyricFont(staffSize)->GetPointSize());
+    const int xHeight = m_doc->GetTextXHeight(&labelFont, false);
+    if (above) {
+        y += xHeight;
+    }
+    else {
+        y -= xHeight / 4;
+    }
+
+    this->SetOffsetStaffSize(dir, staffSize);
+    this->CalcOffset(dc, x, y);
+
+    dc->StartGraphic(dir, "", dir->GetID());
+    dc->SetFont(&labelFont);
+    TextDrawingParams params;
+    params.m_x = x;
+    params.m_y = y;
+    params.m_pointSize = labelFont.GetPointSize();
+    dc->StartText(this->ToDeviceContextX(params.m_x), this->ToDeviceContextY(params.m_y), HORIZONTALALIGNMENT_center);
+    if (SvgDeviceContext *svgDc = dynamic_cast<SvgDeviceContext *>(dc)) {
+        svgDc->SetCurrentNodeFontSize(labelFont.GetPointSize());
+    }
+    this->DrawTextChildren(dc, dir, params);
+    dc->EndText();
+    dc->ResetFont();
+    dc->EndGraphic(dir, this);
 }
 
 void View::DrawGliss(DeviceContext *dc, Gliss *gliss, int x1, int x2, Staff *staff, char spanningType, Object *graphic)

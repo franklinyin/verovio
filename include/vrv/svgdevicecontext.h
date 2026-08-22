@@ -103,6 +103,8 @@ public:
     ///@{
     void StartText(int x, int y, data_HORIZONTALALIGNMENT alignment = HORIZONTALALIGNMENT_left) override;
     void EndText() override;
+    /** Put a real font-size on the current <text> node (StartText defaults to 0px). */
+    void SetCurrentNodeFontSize(int pointSize);
 
     /**
      * @name Move a text to the specified position, for example when starting a new line.
