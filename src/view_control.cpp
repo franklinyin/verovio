@@ -2322,7 +2322,18 @@ void View::DrawSchenkerLabel(DeviceContext *dc, Dir *dir, Measure *measure, Syst
     this->SetOffsetStaffSize(dir, staffSize);
     this->CalcOffset(dc, x, y);
 
+    int anchorX = note->GetDrawingX();
+    int anchorY = note->GetDrawingY();
+    this->CalcOffset(dc, anchorX, anchorY);
+    const Point labelDevice = this->ToDeviceContext(Point(x, y));
+    const Point anchorDevice = this->ToDeviceContext(Point(anchorX, anchorY));
+
     dc->StartGraphic(dir, "", dir->GetID());
+    dc->SetCustomGraphicAttributes("label-xy", StringFormat("%d,%d", labelDevice.x, labelDevice.y));
+    dc->SetCustomGraphicAttributes("anchor-xy", StringFormat("%d,%d", anchorDevice.x, anchorDevice.y));
+    if (dir->HasStartid()) {
+        dc->SetCustomGraphicAttributes("startid", ExtractIDFragment(dir->GetStartid()));
+    }
     dc->SetFont(&labelFont);
     TextDrawingParams params;
     params.m_x = x;
