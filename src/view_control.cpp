@@ -13,6 +13,7 @@
 #include <cassert>
 #include <climits>
 #include <sstream>
+#include <vector>
 
 //----------------------------------------------------------------------------
 
@@ -2230,17 +2231,74 @@ void View::DrawSchenkerLabel(DeviceContext *dc, Dir *dir, Measure *measure, Syst
         }
     }
 
-    if (Flag *flag = dynamic_cast<Flag *>(note->FindDescendantByType(FLAG))) {
-        if (flag->HasContentBB()) {
-            outwardTop = std::max(outwardTop, flag->GetContentTop());
-            outwardBottom = std::min(outwardBottom, flag->GetContentBottom());
+    if (const Flag *flag = dynamic_cast<const Flag *>(note->FindDescendantByType(FLAG))) {
+        if (!note->GetAncestorBeam()) {
+            if (flag->HasContentBB()) {
+                outwardTop = std::max(outwardTop, flag->GetContentTop());
+                outwardBottom = std::min(outwardBottom, flag->GetContentBottom());
+            }
+            else {
+                const int notationSize = staff->GetDrawingStaffNotationSize();
+                const Point upSE = flag->GetStemUpSE(m_doc, notationSize, flag->GetDrawingCueSize());
+                const Point downNW = flag->GetStemDownNW(m_doc, notationSize, flag->GetDrawingCueSize());
+                outwardTop = std::max(outwardTop, flag->GetDrawingY() + upSE.y);
+                outwardBottom = std::min(outwardBottom, flag->GetDrawingY() + downNW.y);
+            }
         }
-        else {
-            const int notationSize = staff->GetDrawingStaffNotationSize();
-            const Point upSE = flag->GetStemUpSE(m_doc, notationSize, flag->GetDrawingCueSize());
-            const Point downNW = flag->GetStemDownNW(m_doc, notationSize, flag->GetDrawingCueSize());
-            outwardTop = std::max(outwardTop, flag->GetDrawingY() + upSE.y);
-            outwardBottom = std::min(outwardBottom, flag->GetDrawingY() + downNW.y);
+    }
+
+    if (Beam *beam = note->GetAncestorBeam()) {
+        const ArrayOfBeamElementCoords *coords = beam->m_beamSegment.GetElementCoordRefs();
+        if (coords && !coords->empty()) {
+            int yBeam = VRV_UNSET;
+            for (const BeamElementCoord *coord : *coords) {
+                if (coord && coord->m_element == note) {
+                    yBeam = coord->m_yBeam;
+                    break;
+                }
+            }
+            if (yBeam == VRV_UNSET) {
+                std::vector<const BeamElementCoord *> ordered;
+                ordered.reserve(coords->size());
+                for (const BeamElementCoord *coord : *coords) {
+                    if (coord) ordered.push_back(coord);
+                }
+                std::sort(ordered.begin(), ordered.end(),
+                    [](const BeamElementCoord *a, const BeamElementCoord *b) { return a->m_x < b->m_x; });
+                const int nx = note->GetDrawingX();
+                if (ordered.size() == 1) {
+                    yBeam = ordered.front()->m_yBeam;
+                }
+                else if (!ordered.empty()) {
+                    if (nx <= ordered.front()->m_x) {
+                        yBeam = ordered.front()->m_yBeam;
+                    }
+                    else if (nx >= ordered.back()->m_x) {
+                        yBeam = ordered.back()->m_yBeam;
+                    }
+                    else {
+                        for (size_t i = 0; i + 1 < ordered.size(); ++i) {
+                            const int x0 = ordered[i]->m_x;
+                            const int x1 = ordered[i + 1]->m_x;
+                            if ((nx >= x0) && (nx <= x1) && (x1 != x0)) {
+                                const double t = double(nx - x0) / double(x1 - x0);
+                                yBeam = ordered[i]->m_yBeam
+                                    + int(t * (ordered[i + 1]->m_yBeam - ordered[i]->m_yBeam));
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if (yBeam != VRV_UNSET) {
+                // m_yBeam is the outer edge of the primary bar (DrawBeam polygon).
+                if (beam->m_drawingPlace == BEAMPLACE_above) {
+                    outwardTop = std::max(outwardTop, yBeam);
+                }
+                else if (beam->m_drawingPlace == BEAMPLACE_below) {
+                    outwardBottom = std::min(outwardBottom, yBeam);
+                }
+            }
         }
     }
 
