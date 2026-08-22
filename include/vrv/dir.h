@@ -81,6 +81,12 @@ public:
      */
     bool IsExtenderElement() const override { return GetExtender() == BOOLEAN_true; }
 
+    bool HasSchenkerLabel() const;
+    bool HasSchenkerManualOffset() const;
+    void AddSchenkerManualOffset(int offsetX, int offsetY);
+    int GetSchenkerManualOffsetX() const;
+    int GetSchenkerManualOffsetY() const;
+
     //----------//
     // Functors //
     //----------//
@@ -104,6 +110,10 @@ public:
 private:
     /** stageDir flag */
     bool m_isStageDir;
+    /** L2B runtime-only; not serialized to MEI. */
+    bool m_hasSchenkerManualOffset;
+    int m_schenkerManualOffsetX;
+    int m_schenkerManualOffsetY;
 };
 
 } // namespace vrv

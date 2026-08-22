@@ -50,6 +50,9 @@ Dir::Dir(bool isStageDir)
 
     this->Reset();
     this->SetStageDir(isStageDir);
+    m_hasSchenkerManualOffset = false;
+    m_schenkerManualOffsetX = 0;
+    m_schenkerManualOffsetY = 0;
 }
 
 Dir::~Dir() {}
@@ -80,6 +83,34 @@ bool Dir::IsSupportedChild(ClassId classId)
     else {
         return false;
     }
+}
+
+bool Dir::HasSchenkerLabel() const
+{
+    return this->HasType() && (this->GetType() == "schenker-label");
+}
+
+bool Dir::HasSchenkerManualOffset() const
+{
+    return m_hasSchenkerManualOffset
+        && ((m_schenkerManualOffsetX != 0) || (m_schenkerManualOffsetY != 0));
+}
+
+void Dir::AddSchenkerManualOffset(int offsetX, int offsetY)
+{
+    m_schenkerManualOffsetX += offsetX;
+    m_schenkerManualOffsetY += offsetY;
+    m_hasSchenkerManualOffset = (m_schenkerManualOffsetX != 0) || (m_schenkerManualOffsetY != 0);
+}
+
+int Dir::GetSchenkerManualOffsetX() const
+{
+    return m_schenkerManualOffsetX;
+}
+
+int Dir::GetSchenkerManualOffsetY() const
+{
+    return m_schenkerManualOffsetY;
 }
 
 //----------------------------------------------------------------------------

@@ -2321,6 +2321,10 @@ void View::DrawSchenkerLabel(DeviceContext *dc, Dir *dir, Measure *measure, Syst
 
     this->SetOffsetStaffSize(dir, staffSize);
     this->CalcOffset(dc, x, y);
+    if (dir->HasSchenkerManualOffset()) {
+        x += dir->GetSchenkerManualOffsetX();
+        y += dir->GetSchenkerManualOffsetY();
+    }
 
     int anchorX = note->GetDrawingX();
     int anchorY = note->GetDrawingY();
