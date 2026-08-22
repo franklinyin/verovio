@@ -232,10 +232,11 @@ void Staff::AdjustDrawingStaffSize()
     int yDiff
         = zone->GetLry() - zone->GetUly() - (zone->GetLrx() - zone->GetUlx()) * tan(abs(rotate) * M_PI / 180.0);
 
-    // Zones may already be in PPU-scaled units after SyncFromFacsimileDoc.
+    // Zones stay in image coordinates for Neon neume-line / transcription docs.
+    // Only Facs documents scale zone values into PPU space via ApplyPPUFactor.
     const Page *page = vrv_cast<const Page *>(this->GetFirstAncestor(PAGE));
     if (!page && doc->GetDrawingPage()) page = doc->GetDrawingPage();
-    if (page) {
+    if (page && doc->IsFacs()) {
         const double ppu = page->GetPPUFactor();
         if ((ppu != 0.0) && (ppu != 1.0)) {
             yDiff = static_cast<int>(std::lround(static_cast<double>(yDiff) / ppu));

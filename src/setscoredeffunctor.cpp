@@ -327,9 +327,19 @@ FunctorCode ScoreDefSetCurrentFunctor::VisitStaff(Staff *staff)
     staff->m_drawingTuning = vrv_cast<Tuning *>(m_currentStaffDef->FindDescendantByType(TUNING));
     staff->m_drawingLines = m_currentStaffDef->GetLines();
     staff->m_drawingNotationType = m_currentStaffDef->GetNotationtype();
+    const int previousStaffSize = staff->m_drawingStaffSize;
     staff->m_drawingStaffSize = 100;
     if (m_currentStaffDef->HasScale()) {
         staff->m_drawingStaffSize = m_currentStaffDef->GetScale();
+    }
+    // Neon facsimile staff height comes from zone sync, not scoreDef scale.
+    // Keep a previously computed zone-derived size across scoreDef refresh so
+    // undo/redo layout does not collapse/enlarge staves.
+    if (previousStaffSize > 100) {
+        const Doc *doc = vrv_cast<const Doc *>(staff->GetFirstAncestor(DOC));
+        if (doc && doc->IsNeumeLines() && staff->HasFacs()) {
+            staff->m_drawingStaffSize = previousStaffSize;
+        }
     }
     if (staff->IsTabLuteGerman()) {
         staff->m_drawingStaffSize *= GERMAN_TAB_STAFF_RATIO;

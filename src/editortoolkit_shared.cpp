@@ -14,6 +14,7 @@
 #include <cmath>
 #include <exception>
 #include <locale>
+#include <map>
 #include <set>
 #include <sstream>
 #include <string>
@@ -283,9 +284,11 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
             ok = this->Redo();
         }
         if (m_doc->IsNeumeLines()) {
-            if (Page *page = m_doc->GetDrawingPage()) {
+            // ReloadState clears m_drawingPage; rebind before DeprecateLayout.
+            if (Page *page = m_doc->SetDrawingPage(0)) {
                 page->DeprecateLayout();
             }
+            LogSchenkerStaffGeometry("O-after-schenker-undo-redo", m_doc, NULL);
         }
         else {
             m_doc->PrepareData();
@@ -911,9 +914,91 @@ std::string EditorToolkitShared::GetCurrentState()
 
 bool EditorToolkitShared::ReloadState(const std::string &data)
 {
+    // Verovio serialization only dumps the page tree. Neon facsimile zones live
+    // on Doc::m_facsimile and would be dropped by ResetToSerialization.
+    // Re-running SyncFromFacsimileDoc after reload also re-sizes staves from raw
+    // zone pixels and enlarges them. Preserve facsimile + page/staff drawing
+    // geometry and only rebind zone pointers.
+    const bool neonSafe = m_doc->IsNeumeLines();
+    Facsimile *facsimile = neonSafe ? m_doc->GetFacsimile() : NULL;
+    std::map<std::string, int> staffSizes;
+    std::map<std::string, int> staffFacsY;
+    std::map<std::string, std::pair<int, int>> staffMeasureFacsX;
+    double pagePPU = 1.0;
+    int pageWidth = -1;
+    int pageHeight = -1;
+    int pageMarginTop = 0;
+    int pageMarginBottom = 0;
+    int pageMarginLeft = 0;
+    int pageMarginRight = 0;
+    if (neonSafe) {
+        if (Pages *pages = m_doc->GetPages()) {
+            if (Page *page = vrv_cast<Page *>(pages->GetChild(0))) {
+                pagePPU = page->GetPPUFactor();
+                pageWidth = page->m_pageWidth;
+                pageHeight = page->m_pageHeight;
+                pageMarginTop = page->m_pageMarginTop;
+                pageMarginBottom = page->m_pageMarginBottom;
+                pageMarginLeft = page->m_pageMarginLeft;
+                pageMarginRight = page->m_pageMarginRight;
+            }
+        }
+        ListOfObjects staffs = m_doc->FindAllDescendantsByType(STAFF);
+        for (Object *object : staffs) {
+            Staff *staff = vrv_cast<Staff *>(object);
+            if (!staff) continue;
+            staffSizes[staff->GetID()] = staff->m_drawingStaffSize;
+            staffFacsY[staff->GetID()] = staff->m_drawingFacsY;
+            if (Measure *measure = vrv_cast<Measure *>(staff->GetFirstAncestor(MEASURE))) {
+                if (measure->IsNeumeLine()) {
+                    staffMeasureFacsX[staff->GetID()]
+                        = { measure->m_drawingFacsX1, measure->m_drawingFacsX2 };
+                }
+            }
+        }
+    }
+
     MEIInput meiinput(m_doc);
     meiinput.SetDeserializing(true);
-    return meiinput.Import(data);
+    if (!meiinput.Import(data)) return false;
+
+    if (neonSafe && facsimile) {
+        m_doc->SetFacsimile(facsimile);
+        if (!m_doc->IsTranscription() && !m_doc->IsFacs()) {
+            m_doc->SetType(Transcription);
+        }
+        PrepareFacsimileFunctor prepareFacsimile(facsimile);
+        m_doc->Process(prepareFacsimile);
+
+        if (Page *page = m_doc->SetDrawingPage(0)) {
+            page->SetPPUFactor(pagePPU);
+            if (pageWidth != -1) {
+                page->m_pageWidth = pageWidth;
+                page->m_pageHeight = pageHeight;
+                page->m_pageMarginTop = pageMarginTop;
+                page->m_pageMarginBottom = pageMarginBottom;
+                page->m_pageMarginLeft = pageMarginLeft;
+                page->m_pageMarginRight = pageMarginRight;
+                m_doc->UpdatePageDrawingSizes();
+            }
+        }
+
+        for (const auto &entry : staffSizes) {
+            Staff *staff = vrv_cast<Staff *>(m_doc->FindDescendantByID(entry.first));
+            if (!staff) continue;
+            staff->m_drawingStaffSize = entry.second;
+            if (staffFacsY.count(entry.first)) {
+                staff->m_drawingFacsY = staffFacsY[entry.first];
+            }
+            if (Measure *measure = vrv_cast<Measure *>(staff->GetFirstAncestor(MEASURE))) {
+                if (measure->IsNeumeLine() && staffMeasureFacsX.count(entry.first)) {
+                    measure->m_drawingFacsX1 = staffMeasureFacsX[entry.first].first;
+                    measure->m_drawingFacsX2 = staffMeasureFacsX[entry.first].second;
+                }
+            }
+        }
+    }
+    return true;
 }
 
 bool EditorToolkitShared::CanUndo() const

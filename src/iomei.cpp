@@ -4798,7 +4798,21 @@ bool MEIInput::ReadSection(Object *parent, pugi::xml_node section)
     if (vrvSection->GetType() == NEUME_LINE_TYPE) {
         delete vrvSection;
         m_doc->SetNeumeLines(true);
-        return ReadSectionChildren(parent, section);
+        // Score-based prepare() and page-based undo snapshots both export
+        // Measure(NEUMELINE) as <section type="neon-neume-line">. Reconstruct
+        // the measure under the current parent (outer Section or System).
+        Measure *neumeLine = new Measure(NEUMELINE);
+        this->SetMeiID(section, neumeLine);
+        this->ReadFacsimileInterface(section, neumeLine);
+        neumeLine->ReadBarring(section);
+        neumeLine->ReadMeasureLog(section);
+        neumeLine->ReadMeterConformanceBar(section);
+        neumeLine->ReadNNumberLike(section);
+        neumeLine->ReadPointing(section);
+        neumeLine->ReadTyped(section);
+        parent->AddChild(neumeLine);
+        this->ReadUnsupportedAttr(section, neumeLine);
+        return this->ReadMeasureChildren(neumeLine, section);
     }
 
     vrvSection->ReadNNumberLike(section);

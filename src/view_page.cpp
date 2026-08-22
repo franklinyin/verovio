@@ -1277,7 +1277,7 @@ void View::DrawStaff(DeviceContext *dc, Staff *staff, Measure *measure, System *
 
     dc->StartGraphic(staff, "", staff->GetID());
 
-    if (m_doc->IsFacs()) {
+    if (m_doc->IsFacs() || m_doc->IsTranscription() || m_doc->IsNeumeLines()) {
         staff->SetFromFacsimile(m_doc);
     }
 
