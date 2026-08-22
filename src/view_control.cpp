@@ -30,7 +30,9 @@
 #include "devicecontext.h"
 #include "dir.h"
 #include "doc.h"
+#include "drawinginterface.h"
 #include "dynam.h"
+#include "elementpart.h"
 #include "ending.h"
 #include "f.h"
 #include "fb.h"
@@ -2209,9 +2211,41 @@ void View::DrawSchenkerLabel(DeviceContext *dc, Dir *dir, Measure *measure, Syst
     const int staffBottom = staffTop - (2 * unit * (staff->m_drawingLines - 1));
     const int padding = (3 * unit) / 2;
 
-    // L1A: outside the staff only. Stem/flag/beam clearance is L1B.
+    // Verovio drawing Y increases upward. Outward for the upper staff is the
+    // maximum Y; outward for the lower staff is the minimum Y.
+    int outwardTop = staffTop;
+    int outwardBottom = staffBottom;
+
+    outwardTop = std::max(outwardTop, note->GetDrawingTop(m_doc, staffSize, false));
+    outwardBottom = std::min(outwardBottom, note->GetDrawingBottom(m_doc, staffSize, false));
+
+    if (const StemmedDrawingInterface *stemmed = note->GetStemmedDrawingInterface()) {
+        const Point stemEnd = stemmed->GetDrawingStemEnd(note);
+        const data_STEMDIRECTION stemDir = stemmed->GetDrawingStemDir();
+        if (stemDir == STEMDIRECTION_up) {
+            outwardTop = std::max(outwardTop, stemEnd.y);
+        }
+        else if (stemDir == STEMDIRECTION_down) {
+            outwardBottom = std::min(outwardBottom, stemEnd.y);
+        }
+    }
+
+    if (Flag *flag = dynamic_cast<Flag *>(note->FindDescendantByType(FLAG))) {
+        if (flag->HasContentBB()) {
+            outwardTop = std::max(outwardTop, flag->GetContentTop());
+            outwardBottom = std::min(outwardBottom, flag->GetContentBottom());
+        }
+        else {
+            const int notationSize = staff->GetDrawingStaffNotationSize();
+            const Point upSE = flag->GetStemUpSE(m_doc, notationSize, flag->GetDrawingCueSize());
+            const Point downNW = flag->GetStemDownNW(m_doc, notationSize, flag->GetDrawingCueSize());
+            outwardTop = std::max(outwardTop, flag->GetDrawingY() + upSE.y);
+            outwardBottom = std::min(outwardBottom, flag->GetDrawingY() + downNW.y);
+        }
+    }
+
     int x = note->GetDrawingX();
-    int y = above ? (staffTop + padding) : (staffBottom - padding);
+    int y = above ? (outwardTop + padding) : (outwardBottom - padding);
 
     FontInfo labelFont;
     if (!dc->UseGlobalStyling()) {
