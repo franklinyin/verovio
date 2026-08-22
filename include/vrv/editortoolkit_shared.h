@@ -60,12 +60,14 @@ protected:
     bool IsSchenkerSlurAction(const jsonxx::Object &param);
     bool IsSchenkerSlurBezierAction(const jsonxx::Object &param);
     bool IsSchenkerSlurCurveAction(const jsonxx::Object &param);
+    bool IsSchenkerSlurResetAction(const jsonxx::Object &param);
     bool IsSchenkerOverlayChain(const jsonxx::Array &actions);
     bool ParseBeamAction(jsonxx::Object param, std::vector<std::string> &noteIds);
     bool ParseFlipAction(jsonxx::Object param, std::string &elementId);
     bool ParseSlurAction(jsonxx::Object param, std::vector<std::string> &noteIds);
     bool ParseSlurBezierAction(jsonxx::Object param, std::string &elementId, Point points[4]);
     bool ParseSchenkerSlurCurveAction(jsonxx::Object param, std::string &elementId, Point points[4]);
+    bool ParseSchenkerSlurResetAction(jsonxx::Object param, std::string &elementId);
     bool ParseSchenkerNoteInsertAction(jsonxx::Object param, std::string &staffId, int &loc,
         double &schenkerX, int &dur, bool &voidHead, bool &showStem);
     bool ParseInsertControlAction(
@@ -94,6 +96,7 @@ protected:
     bool SlurSchenkerNotes(const std::vector<std::string> &noteIds);
     bool SetSchenkerSlurBezier(const std::string &elementId, const Point points[4]);
     bool SetSchenkerSlurCurve(const std::string &elementId, const Point devicePoints[4]);
+    bool ResetSchenkerSlur(const std::string &elementId);
     bool FlipSchenker(const std::string &elementId);
     bool Drag(std::string &elementId, int x, int y);
     bool InsertSchenkerNote(
