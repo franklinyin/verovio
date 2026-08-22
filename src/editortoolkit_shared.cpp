@@ -64,9 +64,9 @@ namespace vrv {
 
 namespace {
 
-bool IsSchenkerUnbeamedNote(const Note *note)
+bool IsSchenkerMovableNote(const Note *note)
 {
-    return note && note->IsSchenker() && !note->IsInBeam();
+    return note && note->IsSchenker();
 }
 
 void SetSchenkerX(Note *note, double schenkerX)
@@ -711,7 +711,7 @@ bool EditorToolkitShared::IsSchenkerNoteMoveAction(const jsonxx::Object &param)
     double schenkerX = 0.0;
     if (!this->ParseSchenkerNoteMoveAction(param, elementId, loc, schenkerX)) return false;
     Object *element = this->GetElement(elementId);
-    return IsSchenkerUnbeamedNote(dynamic_cast<Note *>(element));
+    return IsSchenkerMovableNote(dynamic_cast<Note *>(element));
 }
 
 bool EditorToolkitShared::ParseBeamAction(jsonxx::Object param, std::vector<std::string> &noteIds)
@@ -1338,9 +1338,9 @@ bool EditorToolkitShared::MoveSchenkerNote(const std::string &elementId, int loc
 {
     Object *element = this->GetElement(elementId);
     Note *note = dynamic_cast<Note *>(element);
-    if (!IsSchenkerUnbeamedNote(note)) {
+    if (!IsSchenkerMovableNote(note)) {
         m_editInfo.import("status", "FAILURE");
-        m_editInfo.import("message", "Only unbeamed Schenker notes can be moved.");
+        m_editInfo.import("message", "Only Schenker notes can be moved.");
         return false;
     }
 
@@ -1354,6 +1354,9 @@ bool EditorToolkitShared::MoveSchenkerNote(const std::string &elementId, int loc
 
     note->SetLoc(loc);
     SetSchenkerX(note, schenkerX);
+    if (Beam *beam = note->GetAncestorBeam()) {
+        beam->ReorderByXPos();
+    }
     layer->ReorderByXPos();
 
     if (Page *page = m_doc->GetDrawingPage()) {
