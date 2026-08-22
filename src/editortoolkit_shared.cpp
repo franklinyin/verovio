@@ -64,6 +64,26 @@ namespace vrv {
 
 namespace {
 
+bool IsSchenkerUnbeamedNote(const Note *note)
+{
+    return note && note->IsSchenker() && !note->IsInBeam();
+}
+
+void SetSchenkerX(Note *note, double schenkerX)
+{
+    const std::string xStr = std::to_string(schenkerX);
+    bool updated = false;
+    for (auto &pair : note->m_unsupported) {
+        if (pair.first == "schenker:x") {
+            pair.second = xStr;
+            updated = true;
+            break;
+        }
+    }
+    if (!updated) note->m_unsupported.push_back(std::make_pair("schenker:x", xStr));
+    note->SetDrawingFreeXFromGraphical(schenkerX);
+}
+
 bool IsSchenkerBeamableNote(const Note *note)
 {
     if (!note || !note->IsSchenker()) return false;
@@ -225,6 +245,9 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
     else if ((action == "schenkerSlurReset") && json.has<jsonxx::Object>("param")) {
         skipSetFocus = this->IsSchenkerSlurResetAction(json.get<jsonxx::Object>("param"));
     }
+    else if ((action == "schenkerNoteMove") && json.has<jsonxx::Object>("param")) {
+        skipSetFocus = this->IsSchenkerNoteMoveAction(json.get<jsonxx::Object>("param"));
+    }
     else if ((action == "chain") && json.has<jsonxx::Array>("param")) {
         skipSetFocus = this->IsSchenkerOverlayChain(json.get<jsonxx::Array>("param"));
     }
@@ -375,6 +398,16 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
             return this->ResetSchenkerSlur(elementId);
         }
         LogWarning("Could not parse the schenkerSlurReset action");
+    }
+    else if (action == "schenkerNoteMove") {
+        std::string elementId;
+        int loc = 0;
+        double schenkerX = 0.0;
+        if (this->ParseSchenkerNoteMoveAction(json.get<jsonxx::Object>("param"), elementId, loc, schenkerX)) {
+            this->PrepareUndo();
+            return this->MoveSchenkerNote(elementId, loc, schenkerX);
+        }
+        LogWarning("Could not parse the schenkerNoteMove action");
     }
     else if (action == "drag") {
         std::string elementId;
@@ -634,6 +667,53 @@ bool EditorToolkitShared::IsSchenkerSlurResetAction(const jsonxx::Object &param)
     return IsSchenkerSlurElement(dynamic_cast<Slur *>(element));
 }
 
+bool EditorToolkitShared::ParseSchenkerNoteMoveAction(
+    jsonxx::Object param, std::string &elementId, int &loc, double &schenkerX)
+{
+    if (!param.has<jsonxx::String>("elementId")) return false;
+    elementId = param.get<jsonxx::String>("elementId");
+    if (elementId.empty()) return false;
+    if (param.has<jsonxx::Number>("loc")) {
+        loc = static_cast<int>(std::lround(param.get<jsonxx::Number>("loc")));
+    }
+    else if (param.has<jsonxx::String>("loc")) {
+        try {
+            loc = std::stoi(param.get<jsonxx::String>("loc"));
+        }
+        catch (const std::exception &) {
+            return false;
+        }
+    }
+    else {
+        return false;
+    }
+    if (param.has<jsonxx::Number>("schenkerX")) {
+        schenkerX = param.get<jsonxx::Number>("schenkerX");
+    }
+    else if (param.has<jsonxx::String>("schenkerX")) {
+        try {
+            schenkerX = std::stod(param.get<jsonxx::String>("schenkerX"));
+        }
+        catch (const std::exception &) {
+            return false;
+        }
+    }
+    else {
+        return false;
+    }
+    return true;
+}
+
+bool EditorToolkitShared::IsSchenkerNoteMoveAction(const jsonxx::Object &param)
+{
+    std::string elementId;
+    int loc = 0;
+    double schenkerX = 0.0;
+    if (!this->ParseSchenkerNoteMoveAction(param, elementId, loc, schenkerX)) return false;
+    Object *element = this->GetElement(elementId);
+    return IsSchenkerUnbeamedNote(dynamic_cast<Note *>(element));
+}
+
 bool EditorToolkitShared::ParseBeamAction(jsonxx::Object param, std::vector<std::string> &noteIds)
 {
     noteIds.clear();
@@ -713,6 +793,9 @@ bool EditorToolkitShared::IsSchenkerOverlayChain(const jsonxx::Array &actions)
         }
         else if (stepAction == "schenkerSlurReset") {
             if (!this->IsSchenkerSlurResetAction(stepParam)) return false;
+        }
+        else if (stepAction == "schenkerNoteMove") {
+            if (!this->IsSchenkerNoteMoveAction(stepParam)) return false;
         }
         else {
             return false;
@@ -1247,6 +1330,39 @@ bool EditorToolkitShared::ResetSchenkerSlur(const std::string &elementId)
     LogSchenkerStaffGeometry("N-after-schenker-slur-reset", m_doc, staff);
     this->SetEditInfo();
     m_editInfo.import("uuid", slur->GetID());
+    m_editInfo.import("status", "OK");
+    return true;
+}
+
+bool EditorToolkitShared::MoveSchenkerNote(const std::string &elementId, int loc, double schenkerX)
+{
+    Object *element = this->GetElement(elementId);
+    Note *note = dynamic_cast<Note *>(element);
+    if (!IsSchenkerUnbeamedNote(note)) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Only unbeamed Schenker notes can be moved.");
+        return false;
+    }
+
+    Staff *staff = vrv_cast<Staff *>(note->GetFirstAncestor(STAFF));
+    Layer *layer = vrv_cast<Layer *>(note->GetFirstAncestor(LAYER));
+    if (!layer) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Could not find layer for note move.");
+        return false;
+    }
+
+    note->SetLoc(loc);
+    SetSchenkerX(note, schenkerX);
+    layer->ReorderByXPos();
+
+    if (Page *page = m_doc->GetDrawingPage()) {
+        page->DeprecateLayout();
+    }
+
+    LogSchenkerStaffGeometry("O-after-schenker-note-move", m_doc, staff);
+    this->SetEditInfo();
+    m_editInfo.import("uuid", note->GetID());
     m_editInfo.import("status", "OK");
     return true;
 }
