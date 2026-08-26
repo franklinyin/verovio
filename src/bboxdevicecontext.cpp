@@ -169,6 +169,11 @@ void BBoxDeviceContext::DrawCubicBezierPathFilled(Point bezier1[4], Point bezier
     this->UpdateBB(pos.x, pos.y, pos.x + width, pos.y + height);
 }
 
+void BBoxDeviceContext::DrawCubicBezierRibbonSegment(Point top[4], Point bottom[4])
+{
+    this->DrawCubicBezierPathFilled(top, bottom);
+}
+
 void BBoxDeviceContext::DrawBentParallelogramFilled(Point side[4], int height)
 {
     this->UpdateBB(side[0].x, side[0].y, side[3].x, side[3].y + height);

@@ -193,6 +193,8 @@ public:
     virtual void DrawQuadBezierPath(Point bezier[3]) = 0;
     virtual void DrawCubicBezierPath(Point bezier[4]) = 0;
     virtual void DrawCubicBezierPathFilled(Point bezier1[4], Point bezier2[4]) = 0;
+    // Filled ribbon between two independent cubic sides (used for dashed slur segments).
+    virtual void DrawCubicBezierRibbonSegment(Point top[4], Point bottom[4]) = 0;
     virtual void DrawBentParallelogramFilled(Point side[4], int height) = 0;
     virtual void DrawCircle(int x, int y, int radius) = 0;
     virtual void DrawEllipse(int x, int y, int width, int height) = 0;

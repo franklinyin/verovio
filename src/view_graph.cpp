@@ -22,7 +22,95 @@
 #include "symboldef.h"
 #include "vrv.h"
 
+#include <algorithm>
+#include <cmath>
+
 namespace vrv {
+
+namespace {
+
+void CopyBezier(const Point src[4], Point dest[4])
+{
+    for (int i = 0; i < 4; ++i) dest[i] = src[i];
+}
+
+void SplitBezier(const Point bezier[4], double t, Point left[4], Point right[4])
+{
+    Point p01, p12, p23, p012, p123, p0123;
+    BoundingBox::CalcLinearInterpolation(p01, bezier[0], bezier[1], t);
+    BoundingBox::CalcLinearInterpolation(p12, bezier[1], bezier[2], t);
+    BoundingBox::CalcLinearInterpolation(p23, bezier[2], bezier[3], t);
+    BoundingBox::CalcLinearInterpolation(p012, p01, p12, t);
+    BoundingBox::CalcLinearInterpolation(p123, p12, p23, t);
+    BoundingBox::CalcLinearInterpolation(p0123, p012, p123, t);
+    left[0] = bezier[0];
+    left[1] = p01;
+    left[2] = p012;
+    left[3] = p0123;
+    right[0] = p0123;
+    right[1] = p123;
+    right[2] = p23;
+    right[3] = bezier[3];
+}
+
+void ExtractBezierSegment(const Point bezier[4], double t0, double t1, Point out[4])
+{
+    t0 = std::clamp(t0, 0.0, 1.0);
+    t1 = std::clamp(t1, 0.0, 1.0);
+    if (t1 <= t0) {
+        CopyBezier(bezier, out);
+        out[1] = out[0];
+        out[2] = out[0];
+        out[3] = out[0];
+        return;
+    }
+
+    Point tmp[4], discard[4];
+    if (t0 > 0.0) {
+        SplitBezier(bezier, t0, discard, tmp);
+    }
+    else {
+        CopyBezier(bezier, tmp);
+    }
+
+    if (t1 < 1.0) {
+        const double denom = 1.0 - t0;
+        const double u = (denom > 0.0) ? ((t1 - t0) / denom) : 1.0;
+        SplitBezier(tmp, u, out, discard);
+    }
+    else {
+        CopyBezier(tmp, out);
+    }
+}
+
+double BezierPointDistance(const Point &a, const Point &b)
+{
+    const double dx = static_cast<double>(a.x - b.x);
+    const double dy = static_cast<double>(a.y - b.y);
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+double ParamAtArcLength(const double *cum, int steps, double target)
+{
+    if (target <= 0.0) return 0.0;
+    if (target >= cum[steps]) return 1.0;
+    int lo = 0;
+    int hi = steps;
+    while (hi - lo > 1) {
+        const int mid = (lo + hi) / 2;
+        if (cum[mid] < target) {
+            lo = mid;
+        }
+        else {
+            hi = mid;
+        }
+    }
+    const double span = cum[hi] - cum[lo];
+    const double frac = (span > 0.0) ? ((target - cum[lo]) / span) : 0.0;
+    return (static_cast<double>(lo) + frac) / static_cast<double>(steps);
+}
+
+} // namespace
 
 void View::DrawVerticalLine(DeviceContext *dc, int y1, int y2, int x1, int width, int dashLength, int gapLength)
 {
@@ -375,17 +463,64 @@ void View::DrawThickBezierCurve(
     bez2[2] = this->ToDeviceContext(bez2[2]);
     bez2[3] = this->ToDeviceContext(bez2[3]);
 
-    // Actually draw it
-    if (penStyle == PEN_SOLID) {
-        // Solid Thick Bezier Curves are made of two beziers, filled in.
-        dc->SetPen(std::max(1, m_doc->GetDrawingStemWidth(staffSize) / 2), penStyle);
+    // Same filled ribbon as a solid slur/tie (thick middle, thin ends).
+    dc->SetPen(std::max(1, m_doc->GetDrawingStemWidth(staffSize) / 2), PEN_SOLID);
+
+    if (penStyle == PEN_SOLID || dc->Is(BBOX_DEVICE_CONTEXT)) {
         dc->DrawCubicBezierPathFilled(bez1, bez2);
+        dc->ResetPen();
+        return;
+    }
+
+    // Dashed/dotted: keep the ribbon shape, but draw discontinuous segments
+    // along the centerline (not a uniform-width stroked curve).
+    constexpr int kSteps = 64;
+    double cum[kSteps + 1];
+    cum[0] = 0.0;
+    Point prev = BoundingBox::CalcPointAtBezier(bez1, 0.0);
+    for (int i = 1; i <= kSteps; ++i) {
+        const Point cur = BoundingBox::CalcPointAtBezier(bez1, static_cast<double>(i) / kSteps);
+        cum[i] = cum[i - 1] + BezierPointDistance(prev, cur);
+        prev = cur;
+    }
+    const double totalLen = cum[kSteps];
+    if (totalLen <= 1.0) {
+        dc->DrawCubicBezierPathFilled(bez1, bez2);
+        dc->ResetPen();
+        return;
+    }
+
+    const double unit = static_cast<double>(std::max(1, m_doc->GetDrawingUnit(staffSize)));
+    double dashLen = 0.0;
+    double gapLen = 0.0;
+    if (penStyle == PEN_DOT) {
+        dashLen = std::max(unit * 0.35, static_cast<double>(std::max(1, thickness)) * 0.45);
+        gapLen = std::max(unit * 0.7, static_cast<double>(std::max(1, thickness)) * 1.2);
+    }
+    else if (penStyle == PEN_LONG_DASH) {
+        dashLen = std::max(unit * 2.0, static_cast<double>(std::max(1, thickness)) * 4.0);
+        gapLen = std::max(unit * 1.0, static_cast<double>(std::max(1, thickness)) * 2.0);
     }
     else {
-        // Dashed or Dotted Thick Bezier Curves have a uniform line width.
-        dc->SetPen(thickness, penStyle);
-        dc->DrawCubicBezierPath(bez1);
+        // PEN_SHORT_DASH and other non-solid styles
+        dashLen = std::max(unit * 1.2, static_cast<double>(std::max(1, thickness)) * 2.5);
+        gapLen = std::max(unit * 0.8, static_cast<double>(std::max(1, thickness)) * 1.5);
     }
+
+    double s = 0.0;
+    while (s < totalLen) {
+        const double s1 = std::min(totalLen, s + dashLen);
+        const double t0 = ParamAtArcLength(cum, kSteps, s);
+        const double t1 = ParamAtArcLength(cum, kSteps, s1);
+        if (t1 > t0 + 1e-4) {
+            Point seg1[4], seg2[4];
+            ExtractBezierSegment(bez1, t0, t1, seg1);
+            ExtractBezierSegment(bez2, t0, t1, seg2);
+            dc->DrawCubicBezierRibbonSegment(seg1, seg2);
+        }
+        s += dashLen + gapLen;
+    }
+
     dc->ResetPen();
 }
 

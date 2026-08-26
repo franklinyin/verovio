@@ -760,6 +760,30 @@ void SvgDeviceContext::DrawCubicBezierPathFilled(Point bezier1[4], Point bezier2
     pathChild.append_attribute("stroke-linejoin") = "round";
 }
 
+void SvgDeviceContext::DrawCubicBezierRibbonSegment(Point top[4], Point bottom[4])
+{
+    assert(m_penStack.size());
+    const Pen &currentPen = m_penStack.top();
+
+    // Same outline thickness profile as the solid slur, cut between t0 and t1:
+    // top[t0→t1], cross to bottom[t1], reverse bottom[t1→t0], close.
+    pugi::xml_node pathChild = AddChild("path");
+    pathChild.append_attribute("d") = StringFormat(
+        "M%d,%d C%d,%d %d,%d %d,%d L%d,%d C%d,%d %d,%d %d,%d Z", top[0].x, top[0].y, top[1].x, top[1].y, top[2].x,
+        top[2].y, top[3].x, top[3].y, bottom[3].x, bottom[3].y, bottom[2].x, bottom[2].y, bottom[1].x, bottom[1].y,
+        bottom[0].x, bottom[0].y)
+                                          .c_str();
+
+    if (currentPen.GetWidth() > 0) {
+        pathChild.append_attribute("stroke-width") = currentPen.GetWidth();
+    }
+    if (currentPen.HasColor() || !this->UseGlobalStyling()) {
+        pathChild.append_attribute("stroke") = this->GetColor(currentPen.GetColor()).c_str();
+    }
+    pathChild.append_attribute("stroke-linecap") = "round";
+    pathChild.append_attribute("stroke-linejoin") = "round";
+}
+
 void SvgDeviceContext::DrawBentParallelogramFilled(Point side[4], int height)
 {
     assert(m_penStack.size());
