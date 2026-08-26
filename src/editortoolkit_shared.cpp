@@ -248,6 +248,9 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
     else if ((action == "schenkerNoteMove") && json.has<jsonxx::Object>("param")) {
         skipSetFocus = this->IsSchenkerNoteMoveAction(json.get<jsonxx::Object>("param"));
     }
+    else if ((action == "schenkerLabel") && json.has<jsonxx::Object>("param")) {
+        skipSetFocus = this->IsSchenkerLabelAction(json.get<jsonxx::Object>("param"));
+    }
     else if ((action == "chain") && json.has<jsonxx::Array>("param")) {
         skipSetFocus = this->IsSchenkerOverlayChain(json.get<jsonxx::Array>("param"));
     }
@@ -408,6 +411,15 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
             return this->MoveSchenkerNote(elementId, loc, schenkerX);
         }
         LogWarning("Could not parse the schenkerNoteMove action");
+    }
+    else if (action == "schenkerLabel") {
+        std::string noteId;
+        std::string text;
+        if (this->ParseSchenkerLabelAction(json.get<jsonxx::Object>("param"), noteId, text)) {
+            this->PrepareUndo();
+            return this->InsertSchenkerLabel(noteId, text);
+        }
+        LogWarning("Could not parse the schenkerLabel action");
     }
     else if (action == "drag") {
         std::string elementId;
@@ -714,6 +726,27 @@ bool EditorToolkitShared::IsSchenkerNoteMoveAction(const jsonxx::Object &param)
     return IsSchenkerMovableNote(dynamic_cast<Note *>(element));
 }
 
+bool EditorToolkitShared::ParseSchenkerLabelAction(
+    jsonxx::Object param, std::string &noteId, std::string &text)
+{
+    if (!param.has<jsonxx::String>("noteId")) return false;
+    noteId = param.get<jsonxx::String>("noteId");
+    if (noteId.empty()) return false;
+    if (!param.has<jsonxx::String>("text")) return false;
+    text = param.get<jsonxx::String>("text");
+    return !text.empty();
+}
+
+bool EditorToolkitShared::IsSchenkerLabelAction(const jsonxx::Object &param)
+{
+    std::string noteId;
+    std::string text;
+    if (!this->ParseSchenkerLabelAction(param, noteId, text)) return false;
+    Object *element = this->GetElement(noteId);
+    Note *note = dynamic_cast<Note *>(element);
+    return note && note->IsSchenker();
+}
+
 bool EditorToolkitShared::ParseBeamAction(jsonxx::Object param, std::vector<std::string> &noteIds)
 {
     noteIds.clear();
@@ -796,6 +829,9 @@ bool EditorToolkitShared::IsSchenkerOverlayChain(const jsonxx::Array &actions)
         }
         else if (stepAction == "schenkerNoteMove") {
             if (!this->IsSchenkerNoteMoveAction(stepParam)) return false;
+        }
+        else if (stepAction == "schenkerLabel") {
+            if (!this->IsSchenkerLabelAction(stepParam)) return false;
         }
         else {
             return false;
@@ -1366,6 +1402,72 @@ bool EditorToolkitShared::MoveSchenkerNote(const std::string &elementId, int loc
     LogSchenkerStaffGeometry("O-after-schenker-note-move", m_doc, staff);
     this->SetEditInfo();
     m_editInfo.import("uuid", note->GetID());
+    m_editInfo.import("status", "OK");
+    return true;
+}
+
+bool EditorToolkitShared::InsertSchenkerLabel(const std::string &noteId, const std::string &text)
+{
+    Object *element = this->GetElement(noteId);
+    Note *note = dynamic_cast<Note *>(element);
+    if (!note || !note->IsSchenker()) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Labels can only be attached to Schenker notes.");
+        return false;
+    }
+    if (text.empty()) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Label text is empty.");
+        return false;
+    }
+
+    Staff *staff = vrv_cast<Staff *>(note->GetFirstAncestor(STAFF));
+    Measure *measure = vrv_cast<Measure *>(note->GetFirstAncestor(MEASURE));
+    if (!staff || !measure) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Could not find staff/measure for label.");
+        return false;
+    }
+
+    // Ordinary Verovio Dir — native DrawControlElementText path only.
+    // R2: place=above (upper-staff checkpoint). No custom offsets / DrawSchenkerLabel.
+    Object *childElement = this->PrepareInsertion(measure, "dir");
+    if (!childElement) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Could not create label.");
+        return false;
+    }
+    if (!measure->AddChild(childElement)) {
+        delete childElement;
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Could not insert label.");
+        return false;
+    }
+
+    Dir *dir = vrv_cast<Dir *>(childElement);
+    assert(dir);
+    TimePointInterface *tp = dir->GetTimePointInterface();
+    assert(tp);
+    tp->SetStartid("#" + note->GetID());
+    tp->SetStart(note);
+    dir->SetPlace(STAFFREL_above);
+
+    Text *labelText = new Text();
+    labelText->SetText(UTF8to32(text));
+    if (!dir->AddChild(labelText)) {
+        delete labelText;
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Could not store label text.");
+        return false;
+    }
+
+    if (Page *page = m_doc->GetDrawingPage()) {
+        page->DeprecateLayout();
+    }
+
+    LogSchenkerStaffGeometry("P-after-schenker-label", m_doc, staff);
+    this->SetEditInfo();
+    m_editInfo.import("uuid", dir->GetID());
     m_editInfo.import("status", "OK");
     return true;
 }
