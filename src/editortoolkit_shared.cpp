@@ -251,6 +251,9 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
     else if ((action == "schenkerLabel") && json.has<jsonxx::Object>("param")) {
         skipSetFocus = this->IsSchenkerLabelAction(json.get<jsonxx::Object>("param"));
     }
+    else if ((action == "schenkerLabelOffset") && json.has<jsonxx::Object>("param")) {
+        skipSetFocus = this->IsSchenkerLabelOffsetAction(json.get<jsonxx::Object>("param"));
+    }
     else if ((action == "chain") && json.has<jsonxx::Array>("param")) {
         skipSetFocus = this->IsSchenkerOverlayChain(json.get<jsonxx::Array>("param"));
     }
@@ -420,6 +423,17 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
             return this->InsertSchenkerLabel(noteId, text);
         }
         LogWarning("Could not parse the schenkerLabel action");
+    }
+    else if (action == "schenkerLabelOffset") {
+        std::string elementId;
+        Point fromDevice;
+        Point toDevice;
+        if (this->ParseSchenkerLabelOffsetAction(
+                json.get<jsonxx::Object>("param"), elementId, fromDevice, toDevice)) {
+            this->PrepareUndo();
+            return this->SetSchenkerLabelOffset(elementId, fromDevice, toDevice);
+        }
+        LogWarning("Could not parse the schenkerLabelOffset action");
     }
     else if (action == "drag") {
         std::string elementId;
@@ -747,6 +761,46 @@ bool EditorToolkitShared::IsSchenkerLabelAction(const jsonxx::Object &param)
     return note && note->IsSchenker();
 }
 
+static bool ParseDeviceCoord(const jsonxx::Object &param, const std::string &key, int &value)
+{
+    if (!param.has<jsonxx::Number>(key)) return false;
+    value = static_cast<int>(std::lround(param.get<jsonxx::Number>(key)));
+    return true;
+}
+
+bool EditorToolkitShared::ParseSchenkerLabelOffsetAction(
+    jsonxx::Object param, std::string &elementId, Point &fromDevice, Point &toDevice)
+{
+    if (!param.has<jsonxx::String>("elementId")) return false;
+    elementId = param.get<jsonxx::String>("elementId");
+    if (elementId.empty()) return false;
+    int fromX = 0;
+    int fromY = 0;
+    int toX = 0;
+    int toY = 0;
+    if (!ParseDeviceCoord(param, "fromX", fromX)) return false;
+    if (!ParseDeviceCoord(param, "fromY", fromY)) return false;
+    if (!ParseDeviceCoord(param, "toX", toX)) return false;
+    if (!ParseDeviceCoord(param, "toY", toY)) return false;
+    fromDevice = Point(fromX, fromY);
+    toDevice = Point(toX, toY);
+    return true;
+}
+
+bool EditorToolkitShared::IsSchenkerLabelOffsetAction(const jsonxx::Object &param)
+{
+    std::string elementId;
+    Point fromDevice;
+    Point toDevice;
+    if (!this->ParseSchenkerLabelOffsetAction(param, elementId, fromDevice, toDevice)) return false;
+    Object *element = this->GetElement(elementId);
+    Dir *dir = dynamic_cast<Dir *>(element);
+    if (!dir) return false;
+    LayerElement *start = dir->GetStart();
+    Note *note = dynamic_cast<Note *>(start);
+    return note && note->IsSchenker();
+}
+
 bool EditorToolkitShared::ParseBeamAction(jsonxx::Object param, std::vector<std::string> &noteIds)
 {
     noteIds.clear();
@@ -832,6 +886,9 @@ bool EditorToolkitShared::IsSchenkerOverlayChain(const jsonxx::Array &actions)
         }
         else if (stepAction == "schenkerLabel") {
             if (!this->IsSchenkerLabelAction(stepParam)) return false;
+        }
+        else if (stepAction == "schenkerLabelOffset") {
+            if (!this->IsSchenkerLabelOffsetAction(stepParam)) return false;
         }
         else {
             return false;
@@ -1466,6 +1523,85 @@ bool EditorToolkitShared::InsertSchenkerLabel(const std::string &noteId, const s
     }
 
     LogSchenkerStaffGeometry("P-after-schenker-label", m_doc, staff);
+    this->SetEditInfo();
+    m_editInfo.import("uuid", dir->GetID());
+    m_editInfo.import("status", "OK");
+    return true;
+}
+
+namespace {
+
+double SchenkerDrawingDeltaToVu(int delta, int unit, int staffSize)
+{
+    if ((unit == 0) || (staffSize == 0)) return 0.0;
+    return static_cast<double>(delta) * 100.0 / static_cast<double>(unit * staffSize);
+}
+
+void SchenkerSetMeasurementVu(data_MEASUREMENTSIGNED &target, double vu)
+{
+    target = data_MEASUREMENTSIGNED();
+    target.SetVu(vu);
+}
+
+} // namespace
+
+bool EditorToolkitShared::SetSchenkerLabelOffset(
+    const std::string &elementId, const Point &fromDevice, const Point &toDevice)
+{
+    Object *element = this->GetElement(elementId);
+    Dir *dir = dynamic_cast<Dir *>(element);
+    if (!dir) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Only Dir labels can receive a visual offset.");
+        return false;
+    }
+    LayerElement *start = dir->GetStart();
+    Note *note = dynamic_cast<Note *>(start);
+    if (!note || !note->IsSchenker()) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Label must be linked to a Schenker note.");
+        return false;
+    }
+    if (!m_view) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "View is required to convert SVG/device coordinates.");
+        return false;
+    }
+
+    Staff *staff = vrv_cast<Staff *>(note->GetFirstAncestor(STAFF));
+    if (!staff) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Could not find staff for label offset.");
+        return false;
+    }
+
+    // Exact inverse of View::ToDeviceContext. Convert both points, then subtract.
+    const Point fromLogical = m_view->ToLogical(fromDevice);
+    const Point toLogical = m_view->ToLogical(toDevice);
+    const int deltaX = toLogical.x - fromLogical.x;
+    const int deltaY = toLogical.y - fromLogical.y;
+
+    const int meiUnit = m_doc->GetOptions()->m_unit.GetValue();
+    const int staffSize = staff->m_drawingStaffSize;
+    OffsetInterface *offset = dir->GetOffsetInterface();
+    assert(offset);
+
+    double hoVu = offset->HasHo() ? offset->GetHo().GetVu() : 0.0;
+    double voVu = offset->HasVo() ? offset->GetVo().GetVu() : 0.0;
+    hoVu += SchenkerDrawingDeltaToVu(deltaX, meiUnit, staffSize);
+    voVu += SchenkerDrawingDeltaToVu(deltaY, meiUnit, staffSize);
+
+    data_MEASUREMENTSIGNED measurement;
+    SchenkerSetMeasurementVu(measurement, hoVu);
+    offset->SetHo(measurement);
+    SchenkerSetMeasurementVu(measurement, voVu);
+    offset->SetVo(measurement);
+
+    if (Page *page = m_doc->GetDrawingPage()) {
+        page->DeprecateLayout();
+    }
+
+    LogSchenkerStaffGeometry("Q-after-schenker-label-offset", m_doc, staff);
     this->SetEditInfo();
     m_editInfo.import("uuid", dir->GetID());
     m_editInfo.import("status", "OK");

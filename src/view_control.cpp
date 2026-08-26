@@ -1763,6 +1763,11 @@ void View::DrawControlElementText(DeviceContext *dc, ControlElement *element, Me
     if (!start) return;
 
     dc->StartGraphic(element, "", element->GetID());
+    if (SvgDeviceContext *svgDc = dynamic_cast<SvgDeviceContext *>(dc)) {
+        if (start) {
+            svgDc->SetCustomGraphicAttributes("startid", start->GetID());
+        }
+    }
 
     const data_STAFFREL place = interfaceTextDir->GetPlace();
 
