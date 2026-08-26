@@ -62,6 +62,7 @@ protected:
     bool IsSchenkerSlurCurveAction(const jsonxx::Object &param);
     bool IsSchenkerSlurResetAction(const jsonxx::Object &param);
     bool IsSchenkerSlurDashedAction(const jsonxx::Object &param);
+    bool IsSchenkerBeamStemAdjustAction(const jsonxx::Object &param);
     bool IsSchenkerNoteMoveAction(const jsonxx::Object &param);
     bool IsSchenkerLabelAction(const jsonxx::Object &param);
     bool IsSchenkerLabelOffsetAction(const jsonxx::Object &param);
@@ -73,6 +74,8 @@ protected:
     bool ParseSchenkerSlurCurveAction(jsonxx::Object param, std::string &elementId, Point points[4]);
     bool ParseSchenkerSlurResetAction(jsonxx::Object param, std::string &elementId);
     bool ParseSchenkerSlurDashedAction(jsonxx::Object param, std::string &elementId);
+    bool ParseSchenkerBeamStemAdjustAction(
+        jsonxx::Object param, std::string &elementId, Point &fromDevice, Point &toDevice);
     bool ParseSchenkerNoteMoveAction(
         jsonxx::Object param, std::string &elementId, int &loc, double &schenkerX);
     bool ParseSchenkerLabelAction(jsonxx::Object param, std::string &noteId, std::string &text);
@@ -108,6 +111,8 @@ protected:
     bool SetSchenkerSlurCurve(const std::string &elementId, const Point devicePoints[4]);
     bool ResetSchenkerSlur(const std::string &elementId);
     bool ToggleSchenkerSlurDashed(const std::string &elementId);
+    bool AdjustSchenkerBeamStems(
+        const std::string &elementId, const Point &fromDevice, const Point &toDevice);
     bool MoveSchenkerNote(const std::string &elementId, int loc, double schenkerX);
     bool InsertSchenkerLabel(const std::string &noteId, const std::string &text);
     bool SetSchenkerLabelOffset(const std::string &elementId, const Point &fromDevice, const Point &toDevice);

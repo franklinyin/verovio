@@ -340,6 +340,9 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
     else if ((action == "schenkerSlurDashed") && json.has<jsonxx::Object>("param")) {
         skipSetFocus = this->IsSchenkerSlurDashedAction(json.get<jsonxx::Object>("param"));
     }
+    else if ((action == "schenkerBeamStemAdjust") && json.has<jsonxx::Object>("param")) {
+        skipSetFocus = this->IsSchenkerBeamStemAdjustAction(json.get<jsonxx::Object>("param"));
+    }
     else if ((action == "schenkerNoteMove") && json.has<jsonxx::Object>("param")) {
         skipSetFocus = this->IsSchenkerNoteMoveAction(json.get<jsonxx::Object>("param"));
     }
@@ -507,6 +510,17 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
             return this->ToggleSchenkerSlurDashed(elementId);
         }
         LogWarning("Could not parse the schenkerSlurDashed action");
+    }
+    else if (action == "schenkerBeamStemAdjust") {
+        std::string elementId;
+        Point fromDevice;
+        Point toDevice;
+        if (this->ParseSchenkerBeamStemAdjustAction(
+                json.get<jsonxx::Object>("param"), elementId, fromDevice, toDevice)) {
+            this->PrepareUndo();
+            return this->AdjustSchenkerBeamStems(elementId, fromDevice, toDevice);
+        }
+        LogWarning("Could not parse the schenkerBeamStemAdjust action");
     }
     else if (action == "schenkerNoteMove") {
         std::string elementId;
@@ -806,6 +820,22 @@ bool EditorToolkitShared::IsSchenkerSlurDashedAction(const jsonxx::Object &param
     return this->IsSchenkerSlurResetAction(param);
 }
 
+bool EditorToolkitShared::ParseSchenkerBeamStemAdjustAction(
+    jsonxx::Object param, std::string &elementId, Point &fromDevice, Point &toDevice)
+{
+    return this->ParseSchenkerLabelOffsetAction(param, elementId, fromDevice, toDevice);
+}
+
+bool EditorToolkitShared::IsSchenkerBeamStemAdjustAction(const jsonxx::Object &param)
+{
+    std::string elementId;
+    Point fromDevice;
+    Point toDevice;
+    if (!this->ParseSchenkerBeamStemAdjustAction(param, elementId, fromDevice, toDevice)) return false;
+    Object *element = this->GetElement(elementId);
+    return IsSchenkerBeamElement(dynamic_cast<Beam *>(element));
+}
+
 bool EditorToolkitShared::ParseSchenkerNoteMoveAction(
     jsonxx::Object param, std::string &elementId, int &loc, double &schenkerX)
 {
@@ -996,6 +1026,9 @@ bool EditorToolkitShared::IsSchenkerOverlayChain(const jsonxx::Array &actions)
         }
         else if (stepAction == "schenkerSlurDashed") {
             if (!this->IsSchenkerSlurDashedAction(stepParam)) return false;
+        }
+        else if (stepAction == "schenkerBeamStemAdjust") {
+            if (!this->IsSchenkerBeamStemAdjustAction(stepParam)) return false;
         }
         else if (stepAction == "schenkerNoteMove") {
             if (!this->IsSchenkerNoteMoveAction(stepParam)) return false;
@@ -1574,6 +1607,74 @@ bool EditorToolkitShared::ToggleSchenkerSlurDashed(const std::string &elementId)
     this->SetEditInfo();
     m_editInfo.import("uuid", slur->GetID());
     m_editInfo.import("lform", (slur->GetLform() == LINEFORM_dashed) ? "dashed" : "");
+    m_editInfo.import("status", "OK");
+    return true;
+}
+
+bool EditorToolkitShared::AdjustSchenkerBeamStems(
+    const std::string &elementId, const Point &fromDevice, const Point &toDevice)
+{
+    Object *element = this->GetElement(elementId);
+    Beam *beam = dynamic_cast<Beam *>(element);
+    if (!IsSchenkerBeamElement(beam)) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Only Schenker beams can be stem-adjusted.");
+        return false;
+    }
+    if (!m_view) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "View is required to convert SVG/device coordinates.");
+        return false;
+    }
+
+    Staff *staff = vrv_cast<Staff *>(beam->GetFirstAncestor(STAFF));
+    if (!staff) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Could not find staff for beam stem adjust.");
+        return false;
+    }
+
+    const Point fromLogical = m_view->ToLogical(fromDevice);
+    const Point toLogical = m_view->ToLogical(toDevice);
+    const int deltaLogicalY = toLogical.y - fromLogical.y;
+    if (deltaLogicalY == 0) {
+        this->SetEditInfo();
+        m_editInfo.import("uuid", beam->GetID());
+        m_editInfo.import("status", "OK");
+        return true;
+    }
+
+    const int unit = std::max(1, m_doc->GetDrawingUnit(staff->m_drawingStaffSize));
+    const data_BEAMPLACE place = ResolveSchenkerBeamPlace(beam, m_doc, staff);
+    // Stem-up (beam above): tip moves with +logicalY when lengthening.
+    // Stem-down (beam below): tip moves with -logicalY when lengthening.
+    const int deltaDrawing = (place == BEAMPLACE_below) ? -deltaLogicalY : deltaLogicalY;
+    const double deltaVu = static_cast<double>(deltaDrawing) / static_cast<double>(unit);
+
+    ListOfObjects notes = beam->FindAllDescendantsByType(NOTE);
+    for (Object *object : notes) {
+        Note *note = vrv_cast<Note *>(object);
+        if (!note) continue;
+        double currentVu = 0.0;
+        if (note->HasStemLen()) {
+            currentVu = note->GetStemLen();
+        }
+        else if (Stem *stem = note->GetDrawingStem()) {
+            currentVu = static_cast<double>(std::abs(stem->GetDrawingStemLen())) / static_cast<double>(unit);
+        }
+        else {
+            currentVu = static_cast<double>(STANDARD_STEMLENGTH);
+        }
+        note->SetStemLen(std::max(1.0, currentVu + deltaVu));
+    }
+
+    if (Page *page = m_doc->GetDrawingPage()) {
+        page->DeprecateLayout();
+    }
+
+    LogSchenkerStaffGeometry("Q-after-schenker-beam-stem", m_doc, staff);
+    this->SetEditInfo();
+    m_editInfo.import("uuid", beam->GetID());
     m_editInfo.import("status", "OK");
     return true;
 }

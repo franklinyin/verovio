@@ -11,6 +11,7 @@
 
 #include <array>
 #include <cassert>
+#include <cmath>
 #include <math.h>
 
 //----------------------------------------------------------------------------
@@ -1256,6 +1257,29 @@ void BeamSegment::CalcBeamStemLength(const Staff *staff, data_BEAMPLACE place, b
             }
         }
     }
+
+    // Schenker: honor a shared @stem.len (vu) so dragged beam height persists.
+    bool allSchenker = !m_beamElementCoordRefs.empty();
+    bool hasStemLen = false;
+    double stemLenVu = 0.0;
+    for (BeamElementCoord *coord : m_beamElementCoordRefs) {
+        if (!coord->m_element || !coord->m_element->Is(NOTE)) continue;
+        Note *note = vrv_cast<Note *>(coord->m_element);
+        if (!note || !note->IsSchenker()) {
+            allSchenker = false;
+            break;
+        }
+        if (note->HasStemLen()) {
+            hasStemLen = true;
+            stemLenVu = note->GetStemLen();
+        }
+    }
+    if (allSchenker && hasStemLen) {
+        const int directionBias = (place == BEAMPLACE_below) ? -1 : 1;
+        // SetDrawingStemDir: m_yBeam += stemLen * unit / 2, while unbeamed uses vu * unit.
+        m_uniformStemLength = directionBias * static_cast<int>(std::lround(stemLenVu * 2.0));
+        if (m_uniformStemLength == 0) m_uniformStemLength = directionBias;
+    }
 }
 
 int BeamSegment::CalcMixedBeamCenterY(int step, int unit) const
@@ -1948,7 +1972,9 @@ void BeamElementCoord::SetDrawingStemDir(data_STEMDIRECTION stemDir, const Staff
 
     // Make sure the stem reaches the center of the staff
     // Mark the segment as extendedToCenter since we then want a reduced slope
-    if (!interface->m_isSpanningElement && !interface->m_crossStaffContent
+    // Schenker notes with explicit @stem.len keep the user-set length.
+    const bool schenkerStemLen = m_closestNote && m_closestNote->IsSchenker() && m_closestNote->HasStemLen();
+    if (!schenkerStemLen && !interface->m_isSpanningElement && !interface->m_crossStaffContent
         && (BEAMPLACE_mixed != interface->m_drawingPlace)) {
         if (((stemDir == STEMDIRECTION_up) && (m_yBeam <= segment->m_verticalCenter))
             || ((stemDir == STEMDIRECTION_down) && (segment->m_verticalCenter <= m_yBeam))) {
