@@ -29,6 +29,9 @@ namespace vrv {
 
 namespace {
 
+// Dash pattern density for thick beziers (slurs/ties). 1.0 = baseline; higher = denser.
+static constexpr double THICK_BEZIER_DASH_DENSITY = 2.0;
+
 void CopyBezier(const Point src[4], Point dest[4])
 {
     for (int i = 0; i < 4; ++i) dest[i] = src[i];
@@ -491,6 +494,7 @@ void View::DrawThickBezierCurve(
     }
 
     const double unit = static_cast<double>(std::max(1, m_doc->GetDrawingUnit(staffSize)));
+    const double density = std::max(0.1, THICK_BEZIER_DASH_DENSITY);
     double dashLen = 0.0;
     double gapLen = 0.0;
     if (penStyle == PEN_DOT) {
@@ -506,6 +510,8 @@ void View::DrawThickBezierCurve(
         dashLen = std::max(unit * 1.2, static_cast<double>(std::max(1, thickness)) * 2.5);
         gapLen = std::max(unit * 0.8, static_cast<double>(std::max(1, thickness)) * 1.5);
     }
+    dashLen /= density;
+    gapLen /= density;
 
     double s = 0.0;
     while (s < totalLen) {
