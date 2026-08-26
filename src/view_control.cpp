@@ -1767,6 +1767,10 @@ void View::DrawControlElementText(DeviceContext *dc, ControlElement *element, Me
         if (start) {
             svgDc->SetCustomGraphicAttributes("startid", start->GetID());
         }
+        if (interfaceTextDir->HasPlace()) {
+            svgDc->SetCustomGraphicAttributes(
+                "place", interfaceTextDir->AttPlacementRelStaff::StaffrelToStr(interfaceTextDir->GetPlace()));
+        }
     }
 
     const data_STAFFREL place = interfaceTextDir->GetPlace();
@@ -1792,6 +1796,21 @@ void View::DrawControlElementText(DeviceContext *dc, ControlElement *element, Me
         // If we have not timestamp
         int x = start->GetDrawingX() + start->GetDrawingRadius(m_doc);
         int y = element->GetDrawingY();
+
+        // Transcription/facsimile layout never runs AdjustFloatingPositioners, so
+        // MEI @place has no effect on Y. Apply staff-relative defaults here so
+        // place=above/below from staff@n (N2) is visible.
+        if (m_doc->IsTranscription() || m_doc->IsFacs()) {
+            const int unit = m_doc->GetDrawingUnit(staffSize);
+            const int staffHeight = (staff->m_drawingLines - 1) * 2 * unit;
+            const int margin = 2 * unit;
+            if (place == STAFFREL_below) {
+                y = staff->GetDrawingY() - staffHeight - margin;
+            }
+            else if (place == STAFFREL_above) {
+                y = staff->GetDrawingY() + margin;
+            }
+        }
 
         this->SetOffsetStaffSize(element, staffSize);
         this->CalcOffset(dc, x, y);
