@@ -66,6 +66,9 @@
 
 namespace vrv {
 
+// Schenker Dir labels use this fraction of the lyric point size.
+static constexpr double SCHENKER_LABEL_FONT_SCALE = 0.75;
+
 //----------------------------------------------------------------------------
 // View - FloatingObject - ControlElement
 //----------------------------------------------------------------------------
@@ -1830,6 +1833,10 @@ void View::DrawControlElementText(DeviceContext *dc, ControlElement *element, Me
         params.m_x = x;
         params.m_y = y;
         params.m_pointSize = m_doc->GetDrawingLyricFont(staffSize)->GetPointSize();
+        if (schenkerLabel) {
+            params.m_pointSize
+                = std::max(1, static_cast<int>(params.m_pointSize * SCHENKER_LABEL_FONT_SCALE + 0.5));
+        }
 
         int xAdjust = 0;
         const bool isBetweenStaves = (place == STAFFREL_between)
