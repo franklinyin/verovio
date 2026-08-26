@@ -1486,8 +1486,25 @@ bool EditorToolkitShared::InsertSchenkerLabel(const std::string &noteId, const s
         return false;
     }
 
+    // N2: upper/lower from actual Staff drawing order on the page — not staff@n
+    // (CF-005 staves may both have n="1"; each neon-neume-line measure has one staff).
+    const Staff *upperStaff = NULL;
+    int maxY = INT_MIN;
+    if (Page *page = m_doc->GetDrawingPage()) {
+        ListOfObjects staves = page->FindAllDescendantsByType(STAFF);
+        for (Object *object : staves) {
+            Staff *candidate = vrv_cast<Staff *>(object);
+            if (!candidate) continue;
+            const int y = candidate->GetDrawingY();
+            if (!upperStaff || (y > maxY)) {
+                maxY = y;
+                upperStaff = candidate;
+            }
+        }
+    }
+    const bool above = (staff == upperStaff);
+
     // Ordinary Verovio Dir — native DrawControlElementText path only.
-    // R2: place=above (upper-staff checkpoint). No custom offsets / DrawSchenkerLabel.
     Object *childElement = this->PrepareInsertion(measure, "dir");
     if (!childElement) {
         m_editInfo.import("status", "FAILURE");
@@ -1507,7 +1524,7 @@ bool EditorToolkitShared::InsertSchenkerLabel(const std::string &noteId, const s
     assert(tp);
     tp->SetStartid("#" + note->GetID());
     tp->SetStart(note);
-    dir->SetPlace(STAFFREL_above);
+    dir->SetPlace(above ? STAFFREL_above : STAFFREL_below);
 
     Text *labelText = new Text();
     labelText->SetText(UTF8to32(text));
