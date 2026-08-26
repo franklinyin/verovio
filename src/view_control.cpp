@@ -1763,6 +1763,7 @@ void View::DrawControlElementText(DeviceContext *dc, ControlElement *element, Me
     if (!start) return;
 
     dc->StartGraphic(element, "", element->GetID());
+    const bool schenkerLabel = start && start->IsSchenker();
     if (SvgDeviceContext *svgDc = dynamic_cast<SvgDeviceContext *>(dc)) {
         if (start) {
             svgDc->SetCustomGraphicAttributes("startid", start->GetID());
@@ -1771,6 +1772,10 @@ void View::DrawControlElementText(DeviceContext *dc, ControlElement *element, Me
             svgDc->SetCustomGraphicAttributes(
                 "place", interfaceTextDir->AttPlacementRelStaff::StaffrelToStr(interfaceTextDir->GetPlace()));
         }
+        // Verovio global CSS forces g.dir italic; override for Schenker number labels.
+        if (schenkerLabel) {
+            svgDc->SetCurrentNodeStyle("font-style:normal");
+        }
     }
 
     const data_STAFFREL place = interfaceTextDir->GetPlace();
@@ -1778,7 +1783,10 @@ void View::DrawControlElementText(DeviceContext *dc, ControlElement *element, Me
     FontInfo dirTxt;
     if (!dc->UseGlobalStyling()) {
         dirTxt.SetFaceName(m_doc->GetResources().GetTextFont());
-        dirTxt.SetStyle(FONTSTYLE_italic);
+        dirTxt.SetStyle(schenkerLabel ? FONTSTYLE_normal : FONTSTYLE_italic);
+    }
+    else if (schenkerLabel) {
+        dirTxt.SetStyle(FONTSTYLE_normal);
     }
 
     const int lineCount = interfaceTextDir->GetNumberOfLines(element);
@@ -1800,11 +1808,12 @@ void View::DrawControlElementText(DeviceContext *dc, ControlElement *element, Me
 
         // Transcription skips AdjustFloatingPositioners. For Schenker note-linked
         // Dir, default to notehead-centered, 4 notehead-lengths above/below.
-        if ((m_doc->IsTranscription() || m_doc->IsFacs()) && start->IsSchenker()) {
+        // Schenker notes store the visual center in GetDrawingX() (unlike CMN).
+        if ((m_doc->IsTranscription() || m_doc->IsFacs()) && schenkerLabel) {
             const int radius = std::max(1, start->GetDrawingRadius(m_doc));
             const int noteheadLen = 2 * radius;
             const int gap = 4 * noteheadLen;
-            x = start->GetDrawingX() + radius;
+            x = start->GetDrawingX();
             staffAlignment = HORIZONTALALIGNMENT_center;
             if (place == STAFFREL_below) {
                 y = start->GetDrawingY() - gap;

@@ -145,6 +145,11 @@ public:
     void SetCustomGraphicAttributes(const std::string &data, const std::string &value) override;
 
     /**
+     * Set/overwrite style on the current SVG node (inline CSS).
+     */
+    void SetCurrentNodeStyle(const std::string &style);
+
+    /**
      * Set/overwrite font-size on the current SVG node (typically the active <text>).
      * StartText() writes font-size="0px" so nested tspans do not accumulate gaps;
      * some browsers then give the whole text run a zero layout box. Setting a real

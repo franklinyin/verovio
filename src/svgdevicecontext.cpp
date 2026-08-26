@@ -450,6 +450,17 @@ void SvgDeviceContext::SetCustomGraphicAttributes(const std::string &data, const
     m_currentNode.append_attribute(("data-" + data).c_str()) = value.c_str();
 }
 
+void SvgDeviceContext::SetCurrentNodeStyle(const std::string &style)
+{
+    if (style.empty()) return;
+    if (pugi::xml_attribute existing = m_currentNode.attribute("style")) {
+        existing.set_value(style.c_str());
+    }
+    else {
+        m_currentNode.append_attribute("style") = style.c_str();
+    }
+}
+
 void SvgDeviceContext::SetCurrentNodeFontSize(int pointSize)
 {
     if (pointSize <= 0) return;
