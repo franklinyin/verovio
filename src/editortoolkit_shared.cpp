@@ -22,6 +22,7 @@
 //--------------------------------------------------------------------------------
 
 #include "beam.h"
+#include "barline.h"
 #include "chord.h"
 #include "clef.h"
 #include "comparison.h"
@@ -314,7 +315,8 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
     // (PrepareData / ScoreDefSetCurrentDoc / RefreshLayout).
     bool skipSetFocus = false;
     if ((action == "insert") && json.has<jsonxx::Object>("param")) {
-        skipSetFocus = this->IsSchenkerNoteInsert(json.get<jsonxx::Object>("param"));
+        const jsonxx::Object &insertParam = json.get<jsonxx::Object>("param");
+        skipSetFocus = this->IsSchenkerNoteInsert(insertParam) || this->IsSchenkerBarLineInsert(insertParam);
     }
     else if ((action == "delete") && json.has<jsonxx::Object>("param")) {
         skipSetFocus = this->IsSchenkerNoteDelete(json.get<jsonxx::Object>("param"));
@@ -373,7 +375,9 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
             int dur = 1;
             bool voidHead = false;
             bool showStem = false;
-            if (this->ParseSchenkerNoteInsertAction(param, staffId, loc, schenkerX, dur, voidHead, showStem)) {
+            std::string form;
+            if (this->ParseSchenkerNoteInsertAction(param, staffId, loc, schenkerX, dur, voidHead, showStem)
+                || this->ParseSchenkerBarLineInsertAction(param, staffId, schenkerX, form)) {
                 Object *target = this->GetElement(staffId);
                 probe = dynamic_cast<Staff *>(target);
                 if (!probe && target) probe = dynamic_cast<Staff *>(target->GetFirstAncestor(STAFF));
@@ -576,6 +580,16 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
             }
             LogWarning("Could not parse the Schenker insert action: %s", param.json().c_str());
         }
+        else if (this->IsSchenkerBarLineInsert(param)) {
+            std::string staffId;
+            double schenkerX = 0.0;
+            std::string form = "dbl";
+            if (this->ParseSchenkerBarLineInsertAction(param, staffId, schenkerX, form)) {
+                this->PrepareUndo();
+                return this->InsertSchenkerBarLine(staffId, schenkerX, form);
+            }
+            LogWarning("Could not parse the Schenker barLine insert action: %s", param.json().c_str());
+        }
         else {
             std::string elementName, elementId, insertMode;
             if (this->ParseInsertAction(param, elementName, elementId, insertMode)) {
@@ -704,6 +718,16 @@ bool EditorToolkitShared::IsSchenkerNoteInsert(const jsonxx::Object &param) cons
 {
     if (!param.has<jsonxx::String>("elementType")) return false;
     if (param.get<jsonxx::String>("elementType") != "note") return false;
+    if (!param.has<jsonxx::Object>("attributes")) return false;
+    jsonxx::Object attributes = param.get<jsonxx::Object>("attributes");
+    if (!attributes.has<jsonxx::String>("type")) return false;
+    return attributes.get<jsonxx::String>("type") == "schenker";
+}
+
+bool EditorToolkitShared::IsSchenkerBarLineInsert(const jsonxx::Object &param) const
+{
+    if (!param.has<jsonxx::String>("elementType")) return false;
+    if (param.get<jsonxx::String>("elementType") != "barLine") return false;
     if (!param.has<jsonxx::Object>("attributes")) return false;
     jsonxx::Object attributes = param.get<jsonxx::Object>("attributes");
     if (!attributes.has<jsonxx::String>("type")) return false;
@@ -1001,7 +1025,7 @@ bool EditorToolkitShared::IsSchenkerOverlayChain(const jsonxx::Array &actions)
         const std::string stepAction = step.get<jsonxx::String>("action");
         const jsonxx::Object stepParam = step.get<jsonxx::Object>("param");
         if (stepAction == "insert") {
-            if (!this->IsSchenkerNoteInsert(stepParam)) return false;
+            if (!this->IsSchenkerNoteInsert(stepParam) && !this->IsSchenkerBarLineInsert(stepParam)) return false;
         }
         else if (stepAction == "delete") {
             if (!this->IsSchenkerNoteDelete(stepParam)) return false;
@@ -1120,6 +1144,45 @@ bool EditorToolkitShared::ParseSchenkerNoteInsertAction(jsonxx::Object param, st
     }
     else if (attributes.has<jsonxx::Boolean>("stem.visible")) {
         showStem = attributes.get<jsonxx::Boolean>("stem.visible");
+    }
+
+    return true;
+}
+
+bool EditorToolkitShared::ParseSchenkerBarLineInsertAction(
+    jsonxx::Object param, std::string &staffId, double &schenkerX, std::string &form)
+{
+    form = "dbl";
+    if (!param.has<jsonxx::String>("elementType")) return false;
+    if (param.get<jsonxx::String>("elementType") != "barLine") return false;
+    if (!param.has<jsonxx::String>("staffId")) return false;
+    staffId = param.get<jsonxx::String>("staffId");
+    if (!(param.has<jsonxx::Number>("ulx") || param.has<jsonxx::String>("ulx"))) return false;
+    if (!(param.has<jsonxx::Number>("uly") || param.has<jsonxx::String>("uly"))) return false;
+    if (!param.has<jsonxx::Object>("attributes")) return false;
+
+    jsonxx::Object attributes = param.get<jsonxx::Object>("attributes");
+    if (!attributes.has<jsonxx::String>("type")) return false;
+    if (attributes.get<jsonxx::String>("type") != "schenker") return false;
+
+    if (attributes.has<jsonxx::String>("schenker:x")) {
+        try {
+            schenkerX = std::stod(attributes.get<jsonxx::String>("schenker:x"));
+        }
+        catch (const std::exception &) {
+            return false;
+        }
+    }
+    else if (attributes.has<jsonxx::Number>("schenker:x")) {
+        schenkerX = attributes.get<jsonxx::Number>("schenker:x");
+    }
+    else {
+        return false;
+    }
+
+    if (attributes.has<jsonxx::String>("form")) {
+        form = attributes.get<jsonxx::String>("form");
+        if (form.empty()) form = "dbl";
     }
 
     return true;
@@ -2040,6 +2103,47 @@ bool EditorToolkitShared::InsertSchenkerNote(
     LogSchenkerStaffGeometry("E-before-renderToSVG", m_doc, staff);
     this->SetEditInfo();
     m_editInfo.import("uuid", note->GetID());
+    m_editInfo.import("status", "OK");
+    return true;
+}
+
+bool EditorToolkitShared::InsertSchenkerBarLine(
+    const std::string &staffId, double schenkerX, const std::string &form)
+{
+    Object *target = this->GetElement(staffId);
+    Staff *staff = dynamic_cast<Staff *>(target);
+    if (!staff && target) {
+        staff = dynamic_cast<Staff *>(target->GetFirstAncestor(STAFF));
+    }
+    if (!staff) {
+        LogError("Could not find staff '%s' for Schenker barLine", staffId.c_str());
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Could not find staff for Schenker barLine.");
+        return false;
+    }
+
+    Layer *layer = vrv_cast<Layer *>(staff->FindDescendantByType(LAYER));
+    if (!layer) {
+        LogError("Could not find layer on staff '%s' for Schenker barLine", staffId.c_str());
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Could not find layer for Schenker barLine.");
+        return false;
+    }
+
+    BarLine *barLine = EditorToolkit::CreateSchenkerBarLine(layer, schenkerX, form);
+    if (!barLine) {
+        LogError("Could not create Schenker barLine");
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Could not create Schenker barLine.");
+        return false;
+    }
+
+    layer->ReorderByXPos();
+    if (Page *page = m_doc->GetDrawingPage()) {
+        page->DeprecateLayout();
+    }
+    this->SetEditInfo();
+    m_editInfo.import("uuid", barLine->GetID());
     m_editInfo.import("status", "OK");
     return true;
 }

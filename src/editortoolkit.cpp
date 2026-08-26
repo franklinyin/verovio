@@ -16,6 +16,7 @@
 
 #include "layer.h"
 #include "note.h"
+#include "barline.h"
 #include "object.h"
 #include "page.h"
 #include "preparedatafunctor.h"
@@ -72,6 +73,34 @@ Note *EditorToolkit::CreateSchenkerNote(
         note->Process(prepareParts);
     }
     return note;
+}
+
+BarLine *EditorToolkit::CreateSchenkerBarLine(Layer *layer, double schenkerX, const std::string &form)
+{
+    if (!layer) return NULL;
+
+    BarLine *barLine = new BarLine();
+    barLine->SetType("schenker");
+    // Stage-1 insert currently only needs double; map other known MEI @form values if provided.
+    if (form == "single") {
+        barLine->SetForm(BARRENDITION_single);
+    }
+    else if (form == "end") {
+        barLine->SetForm(BARRENDITION_end);
+    }
+    else {
+        barLine->SetForm(BARRENDITION_dbl);
+    }
+
+    const std::string xStr = std::to_string(schenkerX);
+    barLine->m_unsupported.push_back(std::make_pair("schenker:x", xStr));
+
+    if (!layer->AddChild(barLine)) {
+        delete barLine;
+        return NULL;
+    }
+    barLine->SetDrawingFreeXFromGraphical(schenkerX);
+    return barLine;
 }
 
 bool EditorToolkit::AppendChild(std::string &elementId, const std::string &elementName, bool noDuplicate)

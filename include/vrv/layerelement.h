@@ -86,11 +86,13 @@ public:
     virtual bool HasToBeAligned() const { return false; }
 
     /**
-     * Stage 1 Schenker analytical notes: drawn via Note, but excluded from CMN rhythmic spacing.
+     * Stage 1 Schenker analytical overlay: drawn via LayerElement, excluded from CMN rhythmic spacing.
+     * Notes and free-X barLines use type="schenker".
      */
     bool IsSchenker() const
     {
-        return this->Is(NOTE) && this->HasType() && (this->GetType() == "schenker");
+        if (!this->HasType() || (this->GetType() != "schenker")) return false;
+        return this->Is(NOTE) || this->Is(BARLINE);
     }
 
     /**

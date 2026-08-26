@@ -54,6 +54,7 @@ protected:
     bool ParseInsertAction(
         jsonxx::Object param, std::string &elementName, std::string &elementId, std::string &insertMode);
     bool IsSchenkerNoteInsert(const jsonxx::Object &param) const;
+    bool IsSchenkerBarLineInsert(const jsonxx::Object &param) const;
     bool IsSchenkerNoteDelete(const jsonxx::Object &param);
     bool IsSchenkerBeamAction(const jsonxx::Object &param);
     bool IsSchenkerFlipAction(const jsonxx::Object &param);
@@ -83,6 +84,8 @@ protected:
         jsonxx::Object param, std::string &elementId, Point &fromDevice, Point &toDevice);
     bool ParseSchenkerNoteInsertAction(jsonxx::Object param, std::string &staffId, int &loc,
         double &schenkerX, int &dur, bool &voidHead, bool &showStem);
+    bool ParseSchenkerBarLineInsertAction(
+        jsonxx::Object param, std::string &staffId, double &schenkerX, std::string &form);
     bool ParseInsertControlAction(
         jsonxx::Object param, std::string &elementName, std::string &startId, std::string &endId);
     bool ParseNavigate(jsonxx::Object param, std::string &elementId, int &direction);
@@ -120,6 +123,7 @@ protected:
     bool Drag(std::string &elementId, int x, int y);
     bool InsertSchenkerNote(
         const std::string &staffId, int loc, double schenkerX, int dur, bool voidHead, bool showStem);
+    bool InsertSchenkerBarLine(const std::string &staffId, double schenkerX, const std::string &form);
     bool InsertControl(const std::string &elementName, const std::string startId, const std::string endId);
     bool KeyDown(std::string &elementId, int key, bool shiftKey, bool ctrlKey);
     bool Navigate(std::string &elementId, const int &direction);

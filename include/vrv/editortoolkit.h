@@ -23,6 +23,7 @@ namespace vrv {
 
 class Layer;
 class Note;
+class BarLine;
 
 //--------------------------------------------------------------------------------
 // EditorToolkit
@@ -64,6 +65,12 @@ protected:
      */
     static Note *CreateSchenkerNote(Layer *layer, int loc, double schenkerX, int dur = 1,
         bool voidHead = false, bool showStem = false);
+    /**
+     * Create a Stage 1 Schenker free-X barLine (type=schenker, form, schenker:x).
+     * Adds the barLine to layer. Does not create a facsimile zone.
+     * form is an MEI @form value (e.g. "dbl").
+     */
+    static BarLine *CreateSchenkerBarLine(Layer *layer, double schenkerX, const std::string &form = "dbl");
 #endif
 
 protected:
