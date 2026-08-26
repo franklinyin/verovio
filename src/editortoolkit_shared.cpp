@@ -188,6 +188,75 @@ bool SchenkerLabelPlaceAbove(Doc *doc, Staff *staff)
     return staffN <= minN;
 }
 
+bool AddDirTextChild(Dir *dir, const std::u32string &content)
+{
+    if (!dir || content.empty()) return true;
+    Text *text = new Text();
+    text->SetText(content);
+    if (!dir->AddChild(text)) {
+        delete text;
+        return false;
+    }
+    return true;
+}
+
+bool AddDirCaretChild(Dir *dir, const std::u32string &content)
+{
+    if (!dir || content.empty()) return true;
+    // Combining circumflex (U+0302) sits on top of each covered base character.
+    std::u32string withCaret;
+    withCaret.reserve(content.size() * 2);
+    for (char32_t ch : content) {
+        withCaret.push_back(ch);
+        withCaret.push_back(U'\u0302');
+    }
+    return AddDirTextChild(dir, withCaret);
+}
+
+// Parse TeX-like carets into text with a caret (combining circumflex) on top:
+//   ^1   → caret on one codepoint
+//   ^{12} → caret on each codepoint in the braced group
+//   trailing ^ is kept as a literal caret
+bool AddSchenkerLabelTextChildren(Dir *dir, const std::string &utf8)
+{
+    if (!dir) return false;
+
+    const std::u32string input = UTF8to32(utf8);
+    std::u32string plain;
+    size_t i = 0;
+    while (i < input.size()) {
+        if (input[i] != U'^') {
+            plain.push_back(input[i++]);
+            continue;
+        }
+
+        if (!AddDirTextChild(dir, plain)) return false;
+        plain.clear();
+        ++i; // consume '^'
+
+        if (i >= input.size()) {
+            // Trailing caret: keep as literal text.
+            plain.push_back(U'^');
+            break;
+        }
+
+        if (input[i] == U'{') {
+            ++i;
+            std::u32string covered;
+            while (i < input.size() && input[i] != U'}') {
+                covered.push_back(input[i++]);
+            }
+            if (i < input.size() && input[i] == U'}') ++i;
+            if (!AddDirCaretChild(dir, covered)) return false;
+        }
+        else {
+            if (!AddDirCaretChild(dir, std::u32string(1, input[i++]))) return false;
+        }
+    }
+
+    return AddDirTextChild(dir, plain);
+}
+
 void LogSchenkerStaffGeometry(const char *stage, Doc *doc, Staff *staff)
 {
     if (!staff) {
@@ -267,6 +336,9 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
     }
     else if ((action == "schenkerSlurReset") && json.has<jsonxx::Object>("param")) {
         skipSetFocus = this->IsSchenkerSlurResetAction(json.get<jsonxx::Object>("param"));
+    }
+    else if ((action == "schenkerSlurDashed") && json.has<jsonxx::Object>("param")) {
+        skipSetFocus = this->IsSchenkerSlurDashedAction(json.get<jsonxx::Object>("param"));
     }
     else if ((action == "schenkerNoteMove") && json.has<jsonxx::Object>("param")) {
         skipSetFocus = this->IsSchenkerNoteMoveAction(json.get<jsonxx::Object>("param"));
@@ -427,6 +499,14 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
             return this->ResetSchenkerSlur(elementId);
         }
         LogWarning("Could not parse the schenkerSlurReset action");
+    }
+    else if (action == "schenkerSlurDashed") {
+        std::string elementId;
+        if (this->ParseSchenkerSlurDashedAction(json.get<jsonxx::Object>("param"), elementId)) {
+            this->PrepareUndo();
+            return this->ToggleSchenkerSlurDashed(elementId);
+        }
+        LogWarning("Could not parse the schenkerSlurDashed action");
     }
     else if (action == "schenkerNoteMove") {
         std::string elementId;
@@ -716,6 +796,16 @@ bool EditorToolkitShared::IsSchenkerSlurResetAction(const jsonxx::Object &param)
     return IsSchenkerSlurElement(dynamic_cast<Slur *>(element));
 }
 
+bool EditorToolkitShared::ParseSchenkerSlurDashedAction(jsonxx::Object param, std::string &elementId)
+{
+    return this->ParseSchenkerSlurResetAction(param, elementId);
+}
+
+bool EditorToolkitShared::IsSchenkerSlurDashedAction(const jsonxx::Object &param)
+{
+    return this->IsSchenkerSlurResetAction(param);
+}
+
 bool EditorToolkitShared::ParseSchenkerNoteMoveAction(
     jsonxx::Object param, std::string &elementId, int &loc, double &schenkerX)
 {
@@ -903,6 +993,9 @@ bool EditorToolkitShared::IsSchenkerOverlayChain(const jsonxx::Array &actions)
         }
         else if (stepAction == "schenkerSlurReset") {
             if (!this->IsSchenkerSlurResetAction(stepParam)) return false;
+        }
+        else if (stepAction == "schenkerSlurDashed") {
+            if (!this->IsSchenkerSlurDashedAction(stepParam)) return false;
         }
         else if (stepAction == "schenkerNoteMove") {
             if (!this->IsSchenkerNoteMoveAction(stepParam)) return false;
@@ -1450,6 +1543,41 @@ bool EditorToolkitShared::ResetSchenkerSlur(const std::string &elementId)
     return true;
 }
 
+bool EditorToolkitShared::ToggleSchenkerSlurDashed(const std::string &elementId)
+{
+    Object *element = this->GetElement(elementId);
+    Slur *slur = dynamic_cast<Slur *>(element);
+    if (!IsSchenkerSlurElement(slur)) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Only Schenker slurs can be dashed.");
+        return false;
+    }
+
+    Staff *staff = NULL;
+    if (LayerElement *start = slur->GetStart()) {
+        staff = vrv_cast<Staff *>(start->GetFirstAncestor(STAFF));
+    }
+
+    // Native Verovio DrawSlur already honors @lform="dashed" (PEN_SHORT_DASH).
+    if (slur->GetLform() == LINEFORM_dashed) {
+        slur->SetLform(LINEFORM_NONE);
+    }
+    else {
+        slur->SetLform(LINEFORM_dashed);
+    }
+
+    if (Page *page = m_doc->GetDrawingPage()) {
+        page->DeprecateLayout();
+    }
+
+    LogSchenkerStaffGeometry("N-after-schenker-slur-dashed", m_doc, staff);
+    this->SetEditInfo();
+    m_editInfo.import("uuid", slur->GetID());
+    m_editInfo.import("lform", (slur->GetLform() == LINEFORM_dashed) ? "dashed" : "");
+    m_editInfo.import("status", "OK");
+    return true;
+}
+
 bool EditorToolkitShared::MoveSchenkerNote(const std::string &elementId, int loc, double schenkerX)
 {
     Object *element = this->GetElement(elementId);
@@ -1534,10 +1662,8 @@ bool EditorToolkitShared::InsertSchenkerLabel(const std::string &noteId, const s
     tp->SetStart(note);
     dir->SetPlace(above ? STAFFREL_above : STAFFREL_below);
 
-    Text *labelText = new Text();
-    labelText->SetText(UTF8to32(text));
-    if (!dir->AddChild(labelText)) {
-        delete labelText;
+    // TeX-like carets: ^1 → caret on one char; ^{12} → caret on braced chars.
+    if (!AddSchenkerLabelTextChildren(dir, text)) {
         m_editInfo.import("status", "FAILURE");
         m_editInfo.import("message", "Could not store label text.");
         return false;
