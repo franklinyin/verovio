@@ -10,6 +10,7 @@
 //----------------------------------------------------------------------------
 
 #include <cassert>
+#include <algorithm>
 #include <math.h>
 
 #include <string>
@@ -18,6 +19,7 @@
 
 #include "accid.h"
 #include "artic.h"
+#include "barline.h"
 #include "beam.h"
 #include "beatrpt.h"
 #include "btrem.h"
@@ -47,6 +49,7 @@
 #include "multirpt.h"
 #include "note.h"
 #include "options.h"
+#include "page.h"
 #include "rest.h"
 #include "smufl.h"
 #include "staff.h"
@@ -459,7 +462,23 @@ void View::DrawBarLine(DeviceContext *dc, LayerElement *element, Layer *layer, S
     int yTop = staff->GetDrawingY();
     int yBottom = yTop - (staff->m_drawingLines - 1) * m_doc->GetDrawingDoubleUnit(staff->m_drawingStaffSize);
 
-    if (method == BARMETHOD_takt) {
+    // Schenker free-X barLines are system bars: one MEI element spans every
+    // staff on the page (upper through lower), not only the host staff.
+    if (barLine->IsSchenker()) {
+        if (Page *page = vrv_cast<Page *>(staff->GetFirstAncestor(PAGE))) {
+            ListOfObjects staves = page->FindAllDescendantsByType(STAFF);
+            for (Object *object : staves) {
+                Staff *other = vrv_cast<Staff *>(object);
+                if (!other) continue;
+                const int otherTop = other->GetDrawingY();
+                const int otherBottom = otherTop
+                    - (other->m_drawingLines - 1) * m_doc->GetDrawingDoubleUnit(other->m_drawingStaffSize);
+                yTop = std::max(yTop, otherTop);
+                yBottom = std::min(yBottom, otherBottom);
+            }
+        }
+    }
+    else if (method == BARMETHOD_takt) {
         yTop += m_doc->GetDrawingUnit(staff->m_drawingStaffSize);
         yBottom = yTop - m_doc->GetDrawingDoubleUnit(staff->m_drawingStaffSize);
     }

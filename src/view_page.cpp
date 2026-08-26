@@ -822,11 +822,22 @@ void View::DrawBarLine(DeviceContext *dc, int yTop, int yBottom, BarLine *barLin
     const int staffSize = (staff) ? staff->GetDrawingStaffNotationSize() : 100;
     const int unit = m_doc->GetDrawingUnit(staffSize);
 
-    const int x = barLine->GetDrawingX();
+    const int xStored = barLine->GetDrawingX();
     const int barLineWidth = m_doc->GetDrawingBarLineWidth(staffSize);
     const int barLineThickWidth = unit * m_options->m_thickBarlineThickness.GetValue();
     const int barLineSeparation = unit * m_options->m_barLineSeparation.GetValue();
     const int barLinesSum = barLineThickWidth + barLineWidth;
+    // Schenker free-X is the visual center between a double bar's two lines.
+    // Verovio draws the left line at GetDrawingX(), so shift left by half the span.
+    int x = xStored;
+    if (barLine->IsSchenker()
+        && ((form == BARRENDITION_dbl) || (form == BARRENDITION_dbldashed)
+            || (form == BARRENDITION_dbldotted) || (form == BARRENDITION_dblheavy))) {
+        const int span = (form == BARRENDITION_dblheavy)
+            ? (barLineSeparation + barLineThickWidth)
+            : (barLineSeparation + barLineWidth);
+        x = xStored - span / 2;
+    }
     int x2 = x + barLineSeparation;
 
     const int dashLength = unit * m_options->m_dashedBarLineDashLength.GetValue();
