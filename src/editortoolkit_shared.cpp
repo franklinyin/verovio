@@ -165,6 +165,41 @@ data_BEAMPLACE ResolveSchenkerBeamPlace(Beam *beam, Doc *doc, Staff *staff)
     return BEAMPLACE_below;
 }
 
+int SchenkerStaffVerticalRank(const Staff *staff)
+{
+    if (!staff) return INT_MAX;
+    // Facsimile/transcription: smaller zone uly = physically upper staff (CF-005 upper 816, lower 1452).
+    if (const Zone *zone = staff->GetZone()) {
+        return zone->GetUly();
+    }
+    // Layout fallback: logical Y increases upward — negate so min rank = upper staff.
+    return -staff->GetDrawingY();
+}
+
+bool SchenkerLabelPlaceAbove(Doc *doc, Staff *staff)
+{
+    if (!staff || !doc) return true;
+
+    ListOfObjects staves;
+    if (System *system = vrv_cast<System *>(staff->GetFirstAncestor(SYSTEM))) {
+        staves = system->FindAllDescendantsByType(STAFF);
+    }
+    else if (Page *page = doc->GetDrawingPage()) {
+        staves = page->FindAllDescendantsByType(STAFF);
+    }
+    if (staves.empty()) return true;
+
+    const int noteRank = SchenkerStaffVerticalRank(staff);
+    int minRank = INT_MAX;
+    for (Object *object : staves) {
+        Staff *candidate = vrv_cast<Staff *>(object);
+        if (!candidate) continue;
+        minRank = std::min(minRank, SchenkerStaffVerticalRank(candidate));
+    }
+    if (minRank == INT_MAX) return true;
+    return noteRank == minRank;
+}
+
 void LogSchenkerStaffGeometry(const char *stage, Doc *doc, Staff *staff)
 {
     if (!staff) {
@@ -1486,23 +1521,9 @@ bool EditorToolkitShared::InsertSchenkerLabel(const std::string &noteId, const s
         return false;
     }
 
-    // N2: upper/lower from actual Staff drawing order on the page — not staff@n
-    // (CF-005 staves may both have n="1"; each neon-neume-line measure has one staff).
-    const Staff *upperStaff = NULL;
-    int maxY = INT_MIN;
-    if (Page *page = m_doc->GetDrawingPage()) {
-        ListOfObjects staves = page->FindAllDescendantsByType(STAFF);
-        for (Object *object : staves) {
-            Staff *candidate = vrv_cast<Staff *>(object);
-            if (!candidate) continue;
-            const int y = candidate->GetDrawingY();
-            if (!upperStaff || (y > maxY)) {
-                maxY = y;
-                upperStaff = candidate;
-            }
-        }
-    }
-    const bool above = (staff == upperStaff);
+    // N2: upper/lower from facsimile zone uly within the same system (not staff@n — both
+    // neon-neume-line staves are n="1"; GetDrawingY max was inverted for transcription).
+    const bool above = SchenkerLabelPlaceAbove(m_doc, staff);
 
     // Ordinary Verovio Dir — native DrawControlElementText path only.
     Object *childElement = this->PrepareInsertion(measure, "dir");
