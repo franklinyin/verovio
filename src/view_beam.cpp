@@ -13,6 +13,10 @@
 #include <cassert>
 #include <iostream>
 #include <math.h>
+#include <sstream>
+#include <string>
+#include <utility>
+#include <vector>
 
 //----------------------------------------------------------------------------
 
@@ -24,12 +28,97 @@
 #include "layer.h"
 #include "layerelement.h"
 #include "options.h"
+#include "page.h"
 #include "smufl.h"
 #include "staff.h"
 #include "system.h"
 #include "vrv.h"
 
 namespace vrv {
+
+namespace {
+
+bool GetUnsupportedAttr(const Object *object, const std::string &name, std::string &value)
+{
+    if (!object) return false;
+    for (const auto &pair : object->m_unsupported) {
+        if (pair.first == name) {
+            value = pair.second;
+            return true;
+        }
+    }
+    return false;
+}
+
+int SchenkerGraphicalXToDrawing(const Doc *doc, double graphicalX)
+{
+    int drawingX = static_cast<int>(std::lround(graphicalX * DEFINITION_FACTOR));
+    const Page *page = doc ? doc->GetDrawingPage() : NULL;
+    if (page) {
+        const double ppu = page->GetPPUFactor();
+        if ((ppu != 0.0) && (ppu != 1.0)) {
+            drawingX = static_cast<int>(std::lround(drawingX / ppu));
+        }
+    }
+    return drawingX;
+}
+
+/** Parse schenker:beam.hide="a:b;c:d" (graphical X) into drawing-unit intervals. */
+std::vector<std::pair<int, int>> ParseSchenkerBeamHideIntervals(const Beam *beam, const Doc *doc)
+{
+    std::vector<std::pair<int, int>> intervals;
+    if (!beam || !doc) return intervals;
+    std::string raw;
+    if (!GetUnsupportedAttr(beam, "schenker:beam.hide", raw) || raw.empty()) return intervals;
+
+    std::stringstream ss(raw);
+    std::string token;
+    while (std::getline(ss, token, ';')) {
+        if (token.empty()) continue;
+        const size_t colon = token.find(':');
+        if (colon == std::string::npos) continue;
+        try {
+            const double a = std::stod(token.substr(0, colon));
+            const double b = std::stod(token.substr(colon + 1));
+            int x0 = SchenkerGraphicalXToDrawing(doc, a);
+            int x1 = SchenkerGraphicalXToDrawing(doc, b);
+            if (x0 > x1) std::swap(x0, x1);
+            if (x1 > x0) intervals.emplace_back(x0, x1);
+        }
+        catch (const std::exception &) {
+            continue;
+        }
+    }
+    std::sort(intervals.begin(), intervals.end());
+    return intervals;
+}
+
+/** Subtract hide intervals from [x1,x2], returning remaining visible segments. */
+std::vector<std::pair<int, int>> SubtractBeamHideIntervals(
+    int x1, int x2, const std::vector<std::pair<int, int>> &hides)
+{
+    if (x1 > x2) std::swap(x1, x2);
+    std::vector<std::pair<int, int>> visible = { { x1, x2 } };
+    for (const auto &hide : hides) {
+        std::vector<std::pair<int, int>> next;
+        for (const auto &seg : visible) {
+            const int a = seg.first;
+            const int b = seg.second;
+            const int h0 = std::max(a, hide.first);
+            const int h1 = std::min(b, hide.second);
+            if (h0 >= h1) {
+                next.push_back(seg);
+                continue;
+            }
+            if (h0 > a) next.emplace_back(a, h0);
+            if (h1 < b) next.emplace_back(h1, b);
+        }
+        visible.swap(next);
+    }
+    return visible;
+}
+
+} // namespace
 
 void View::DrawBeam(DeviceContext *dc, LayerElement *element, Layer *layer, Staff *staff, Measure *measure)
 {
@@ -264,7 +353,32 @@ void View::DrawBeamSegment(
     // s_y = 0 and s_y2 = 0 respectively
 
     const int polygonHeight = beamInterface->m_beamWidthBlack * shiftY;
-    this->DrawObliquePolygon(dc, x1, y1, x2, y2, polygonHeight);
+
+    // Optional schenker:beam.hide chops out X intervals of the full bar.
+    Beam *beamObj = dynamic_cast<Beam *>(beamInterface);
+    std::vector<std::pair<int, int>> hideIntervals;
+    if (beamObj) {
+        hideIntervals = ParseSchenkerBeamHideIntervals(beamObj, m_doc);
+    }
+    if (hideIntervals.empty()) {
+        this->DrawObliquePolygon(dc, x1, y1, x2, y2, polygonHeight);
+    }
+    else {
+        const int span = x2 - x1;
+        const auto visible = SubtractBeamHideIntervals(x1, x2, hideIntervals);
+        for (const auto &seg : visible) {
+            if (seg.second - seg.first < 2) continue;
+            double t0 = 0.0;
+            double t1 = 1.0;
+            if (span != 0) {
+                t0 = static_cast<double>(seg.first - x1) / static_cast<double>(span);
+                t1 = static_cast<double>(seg.second - x1) / static_cast<double>(span);
+            }
+            const int sy1 = y1 + static_cast<int>(std::lround((y2 - y1) * t0));
+            const int sy2 = y1 + static_cast<int>(std::lround((y2 - y1) * t1));
+            this->DrawObliquePolygon(dc, seg.first, sy1, seg.second, sy2, polygonHeight);
+        }
+    }
 
     /******************************************************************/
     // Draw the beam for partial bars (if any)

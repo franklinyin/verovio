@@ -346,6 +346,9 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
     else if ((action == "schenkerBeamStemAdjust") && json.has<jsonxx::Object>("param")) {
         skipSetFocus = this->IsSchenkerBeamStemAdjustAction(json.get<jsonxx::Object>("param"));
     }
+    else if ((action == "schenkerBeamHide") && json.has<jsonxx::Object>("param")) {
+        skipSetFocus = this->IsSchenkerBeamHideAction(json.get<jsonxx::Object>("param"));
+    }
     else if ((action == "schenkerNoteMove") && json.has<jsonxx::Object>("param")) {
         skipSetFocus = this->IsSchenkerNoteMoveAction(json.get<jsonxx::Object>("param"));
     }
@@ -529,6 +532,16 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
             return this->AdjustSchenkerBeamStems(elementId, fromDevice, toDevice);
         }
         LogWarning("Could not parse the schenkerBeamStemAdjust action");
+    }
+    else if (action == "schenkerBeamHide") {
+        std::string elementId;
+        double fromX = 0.0;
+        double toX = 0.0;
+        if (this->ParseSchenkerBeamHideAction(json.get<jsonxx::Object>("param"), elementId, fromX, toX)) {
+            this->PrepareUndo();
+            return this->HideSchenkerBeamSegment(elementId, fromX, toX);
+        }
+        LogWarning("Could not parse the schenkerBeamHide action");
     }
     else if (action == "schenkerNoteMove") {
         std::string elementId;
@@ -873,6 +886,53 @@ bool EditorToolkitShared::IsSchenkerBeamStemAdjustAction(const jsonxx::Object &p
     return IsSchenkerBeamElement(dynamic_cast<Beam *>(element));
 }
 
+bool EditorToolkitShared::ParseSchenkerBeamHideAction(
+    jsonxx::Object param, std::string &elementId, double &fromX, double &toX)
+{
+    if (!param.has<jsonxx::String>("elementId")) return false;
+    elementId = param.get<jsonxx::String>("elementId");
+    if (elementId.empty()) return false;
+    if (param.has<jsonxx::Number>("fromX")) {
+        fromX = param.get<jsonxx::Number>("fromX");
+    }
+    else if (param.has<jsonxx::String>("fromX")) {
+        try {
+            fromX = std::stod(param.get<jsonxx::String>("fromX"));
+        }
+        catch (const std::exception &) {
+            return false;
+        }
+    }
+    else {
+        return false;
+    }
+    if (param.has<jsonxx::Number>("toX")) {
+        toX = param.get<jsonxx::Number>("toX");
+    }
+    else if (param.has<jsonxx::String>("toX")) {
+        try {
+            toX = std::stod(param.get<jsonxx::String>("toX"));
+        }
+        catch (const std::exception &) {
+            return false;
+        }
+    }
+    else {
+        return false;
+    }
+    return true;
+}
+
+bool EditorToolkitShared::IsSchenkerBeamHideAction(const jsonxx::Object &param)
+{
+    std::string elementId;
+    double fromX = 0.0;
+    double toX = 0.0;
+    if (!this->ParseSchenkerBeamHideAction(param, elementId, fromX, toX)) return false;
+    Object *element = this->GetElement(elementId);
+    return IsSchenkerBeamElement(dynamic_cast<Beam *>(element));
+}
+
 bool EditorToolkitShared::ParseSchenkerNoteMoveAction(
     jsonxx::Object param, std::string &elementId, int &loc, double &schenkerX)
 {
@@ -1099,6 +1159,9 @@ bool EditorToolkitShared::IsSchenkerOverlayChain(const jsonxx::Array &actions)
         }
         else if (stepAction == "schenkerBeamStemAdjust") {
             if (!this->IsSchenkerBeamStemAdjustAction(stepParam)) return false;
+        }
+        else if (stepAction == "schenkerBeamHide") {
+            if (!this->IsSchenkerBeamHideAction(stepParam)) return false;
         }
         else if (stepAction == "schenkerNoteMove") {
             if (!this->IsSchenkerNoteMoveAction(stepParam)) return false;
@@ -1785,6 +1848,51 @@ bool EditorToolkitShared::AdjustSchenkerBeamStems(
     }
 
     LogSchenkerStaffGeometry("Q-after-schenker-beam-stem", m_doc, staff);
+    this->SetEditInfo();
+    m_editInfo.import("uuid", beam->GetID());
+    m_editInfo.import("status", "OK");
+    return true;
+}
+
+bool EditorToolkitShared::HideSchenkerBeamSegment(
+    const std::string &elementId, double fromX, double toX)
+{
+    Object *element = this->GetElement(elementId);
+    Beam *beam = dynamic_cast<Beam *>(element);
+    if (!IsSchenkerBeamElement(beam)) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Only Schenker beams can hide a segment.");
+        return false;
+    }
+
+    if (fromX > toX) std::swap(fromX, toX);
+    if (toX - fromX < 1.0) {
+        this->SetEditInfo();
+        m_editInfo.import("uuid", beam->GetID());
+        m_editInfo.import("status", "OK");
+        return true;
+    }
+
+    const std::string piece = std::to_string(fromX) + ":" + std::to_string(toX);
+    bool updated = false;
+    for (auto &pair : beam->m_unsupported) {
+        if (pair.first == "schenker:beam.hide") {
+            if (!pair.second.empty()) pair.second += ";";
+            pair.second += piece;
+            updated = true;
+            break;
+        }
+    }
+    if (!updated) {
+        beam->m_unsupported.push_back(std::make_pair("schenker:beam.hide", piece));
+    }
+
+    if (Page *page = m_doc->GetDrawingPage()) {
+        page->DeprecateLayout();
+    }
+
+    Staff *staff = vrv_cast<Staff *>(beam->GetFirstAncestor(STAFF));
+    LogSchenkerStaffGeometry("Q-after-schenker-beam-hide", m_doc, staff);
     this->SetEditInfo();
     m_editInfo.import("uuid", beam->GetID());
     m_editInfo.import("status", "OK");
