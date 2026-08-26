@@ -1796,19 +1796,21 @@ void View::DrawControlElementText(DeviceContext *dc, ControlElement *element, Me
         // If we have not timestamp
         int x = start->GetDrawingX() + start->GetDrawingRadius(m_doc);
         int y = element->GetDrawingY();
+        data_HORIZONTALALIGNMENT staffAlignment = alignment;
 
-        // Transcription/facsimile layout never runs AdjustFloatingPositioners, so
-        // MEI @place has no effect on Y. Apply staff-relative defaults here so
-        // place=above/below from staff@n (N2) is visible.
-        if (m_doc->IsTranscription() || m_doc->IsFacs()) {
-            const int unit = m_doc->GetDrawingUnit(staffSize);
-            const int staffHeight = (staff->m_drawingLines - 1) * 2 * unit;
-            const int margin = 2 * unit;
+        // Transcription skips AdjustFloatingPositioners. For Schenker note-linked
+        // Dir, default to notehead-centered, 4 notehead-lengths above/below.
+        if ((m_doc->IsTranscription() || m_doc->IsFacs()) && start->IsSchenker()) {
+            const int radius = std::max(1, start->GetDrawingRadius(m_doc));
+            const int noteheadLen = 2 * radius;
+            const int gap = 4 * noteheadLen;
+            x = start->GetDrawingX() + radius;
+            staffAlignment = HORIZONTALALIGNMENT_center;
             if (place == STAFFREL_below) {
-                y = staff->GetDrawingY() - staffHeight - margin;
+                y = start->GetDrawingY() - gap;
             }
             else if (place == STAFFREL_above) {
-                y = staff->GetDrawingY() + margin;
+                y = start->GetDrawingY() + gap;
             }
         }
 
@@ -1842,7 +1844,7 @@ void View::DrawControlElementText(DeviceContext *dc, ControlElement *element, Me
 
         dc->SetFont(&dirTxt);
 
-        dc->StartText(this->ToDeviceContextX(params.m_x - xAdjust), this->ToDeviceContextY(params.m_y), alignment);
+        dc->StartText(this->ToDeviceContextX(params.m_x - xAdjust), this->ToDeviceContextY(params.m_y), staffAlignment);
         if (SvgDeviceContext *svgDc = dynamic_cast<SvgDeviceContext *>(dc)) {
             svgDc->SetCurrentNodeFontSize(params.m_pointSize);
         }
