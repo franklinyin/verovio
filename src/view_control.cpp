@@ -53,6 +53,7 @@
 #include "slur.h"
 #include "smufl.h"
 #include "staff.h"
+#include "svgdevicecontext.h"
 #include "syl.h"
 #include "symboldef.h"
 #include "system.h"
@@ -1818,6 +1819,9 @@ void View::DrawControlElementText(DeviceContext *dc, ControlElement *element, Me
         dc->SetFont(&dirTxt);
 
         dc->StartText(this->ToDeviceContextX(params.m_x - xAdjust), this->ToDeviceContextY(params.m_y), alignment);
+        if (SvgDeviceContext *svgDc = dynamic_cast<SvgDeviceContext *>(dc)) {
+            svgDc->SetCurrentNodeFontSize(params.m_pointSize);
+        }
         DrawTextChildren(dc, element, params);
         dc->EndText();
 

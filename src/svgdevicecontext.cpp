@@ -450,6 +450,18 @@ void SvgDeviceContext::SetCustomGraphicAttributes(const std::string &data, const
     m_currentNode.append_attribute(("data-" + data).c_str()) = value.c_str();
 }
 
+void SvgDeviceContext::SetCurrentNodeFontSize(int pointSize)
+{
+    if (pointSize <= 0) return;
+    const std::string size = StringFormat("%dpx", pointSize);
+    if (pugi::xml_attribute existing = m_currentNode.attribute("font-size")) {
+        existing.set_value(size.c_str());
+    }
+    else {
+        m_currentNode.append_attribute("font-size") = size.c_str();
+    }
+}
+
 void SvgDeviceContext::EndResumedGraphic(Object *object, View *view)
 {
     m_svgNodeStack.pop_back();

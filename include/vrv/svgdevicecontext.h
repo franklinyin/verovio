@@ -145,6 +145,14 @@ public:
     void SetCustomGraphicAttributes(const std::string &data, const std::string &value) override;
 
     /**
+     * Set/overwrite font-size on the current SVG node (typically the active <text>).
+     * StartText() writes font-size="0px" so nested tspans do not accumulate gaps;
+     * some browsers then give the whole text run a zero layout box. Setting a real
+     * size on <text> keeps Verovio's native text path visible.
+     */
+    void SetCurrentNodeFontSize(int pointSize);
+
+    /**
      * @name Methods for re-starting and ending a graphic for objects drawn in separate steps
      */
     ///@{
