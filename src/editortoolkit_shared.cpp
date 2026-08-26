@@ -70,19 +70,20 @@ bool IsSchenkerMovableNote(const Note *note)
     return note && note->IsSchenker();
 }
 
-void SetSchenkerX(Note *note, double schenkerX)
+void SetSchenkerX(LayerElement *element, double schenkerX)
 {
+    if (!element) return;
     const std::string xStr = std::to_string(schenkerX);
     bool updated = false;
-    for (auto &pair : note->m_unsupported) {
+    for (auto &pair : element->m_unsupported) {
         if (pair.first == "schenker:x") {
             pair.second = xStr;
             updated = true;
             break;
         }
     }
-    if (!updated) note->m_unsupported.push_back(std::make_pair("schenker:x", xStr));
-    note->SetDrawingFreeXFromGraphical(schenkerX);
+    if (!updated) element->m_unsupported.push_back(std::make_pair("schenker:x", xStr));
+    element->SetDrawingFreeXFromGraphical(schenkerX);
 }
 
 bool IsSchenkerBeamableNote(const Note *note)
@@ -348,6 +349,9 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
     else if ((action == "schenkerNoteMove") && json.has<jsonxx::Object>("param")) {
         skipSetFocus = this->IsSchenkerNoteMoveAction(json.get<jsonxx::Object>("param"));
     }
+    else if ((action == "schenkerBarLineMove") && json.has<jsonxx::Object>("param")) {
+        skipSetFocus = this->IsSchenkerBarLineMoveAction(json.get<jsonxx::Object>("param"));
+    }
     else if ((action == "schenkerLabel") && json.has<jsonxx::Object>("param")) {
         skipSetFocus = this->IsSchenkerLabelAction(json.get<jsonxx::Object>("param"));
     }
@@ -535,6 +539,15 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
             return this->MoveSchenkerNote(elementId, loc, schenkerX);
         }
         LogWarning("Could not parse the schenkerNoteMove action");
+    }
+    else if (action == "schenkerBarLineMove") {
+        std::string elementId;
+        double schenkerX = 0.0;
+        if (this->ParseSchenkerBarLineMoveAction(json.get<jsonxx::Object>("param"), elementId, schenkerX)) {
+            this->PrepareUndo();
+            return this->MoveSchenkerBarLine(elementId, schenkerX);
+        }
+        LogWarning("Could not parse the schenkerBarLineMove action");
     }
     else if (action == "schenkerLabel") {
         std::string noteId;
@@ -907,6 +920,39 @@ bool EditorToolkitShared::IsSchenkerNoteMoveAction(const jsonxx::Object &param)
     return IsSchenkerMovableNote(dynamic_cast<Note *>(element));
 }
 
+bool EditorToolkitShared::ParseSchenkerBarLineMoveAction(
+    jsonxx::Object param, std::string &elementId, double &schenkerX)
+{
+    if (!param.has<jsonxx::String>("elementId")) return false;
+    elementId = param.get<jsonxx::String>("elementId");
+    if (elementId.empty()) return false;
+    if (param.has<jsonxx::Number>("schenkerX")) {
+        schenkerX = param.get<jsonxx::Number>("schenkerX");
+    }
+    else if (param.has<jsonxx::String>("schenkerX")) {
+        try {
+            schenkerX = std::stod(param.get<jsonxx::String>("schenkerX"));
+        }
+        catch (const std::exception &) {
+            return false;
+        }
+    }
+    else {
+        return false;
+    }
+    return true;
+}
+
+bool EditorToolkitShared::IsSchenkerBarLineMoveAction(const jsonxx::Object &param)
+{
+    std::string elementId;
+    double schenkerX = 0.0;
+    if (!this->ParseSchenkerBarLineMoveAction(param, elementId, schenkerX)) return false;
+    Object *element = this->GetElement(elementId);
+    BarLine *barLine = dynamic_cast<BarLine *>(element);
+    return barLine && barLine->IsSchenker();
+}
+
 bool EditorToolkitShared::ParseSchenkerLabelAction(
     jsonxx::Object param, std::string &noteId, std::string &text)
 {
@@ -1056,6 +1102,9 @@ bool EditorToolkitShared::IsSchenkerOverlayChain(const jsonxx::Array &actions)
         }
         else if (stepAction == "schenkerNoteMove") {
             if (!this->IsSchenkerNoteMoveAction(stepParam)) return false;
+        }
+        else if (stepAction == "schenkerBarLineMove") {
+            if (!this->IsSchenkerBarLineMoveAction(stepParam)) return false;
         }
         else if (stepAction == "schenkerLabel") {
             if (!this->IsSchenkerLabelAction(stepParam)) return false;
@@ -1774,6 +1823,38 @@ bool EditorToolkitShared::MoveSchenkerNote(const std::string &elementId, int loc
     LogSchenkerStaffGeometry("O-after-schenker-note-move", m_doc, staff);
     this->SetEditInfo();
     m_editInfo.import("uuid", note->GetID());
+    m_editInfo.import("status", "OK");
+    return true;
+}
+
+bool EditorToolkitShared::MoveSchenkerBarLine(const std::string &elementId, double schenkerX)
+{
+    Object *element = this->GetElement(elementId);
+    BarLine *barLine = dynamic_cast<BarLine *>(element);
+    if (!barLine || !barLine->IsSchenker()) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Only Schenker barLines can be moved.");
+        return false;
+    }
+
+    Staff *staff = vrv_cast<Staff *>(barLine->GetFirstAncestor(STAFF));
+    Layer *layer = vrv_cast<Layer *>(barLine->GetFirstAncestor(LAYER));
+    if (!layer) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Could not find layer for barLine move.");
+        return false;
+    }
+
+    SetSchenkerX(barLine, schenkerX);
+    layer->ReorderByXPos();
+
+    if (Page *page = m_doc->GetDrawingPage()) {
+        page->DeprecateLayout();
+    }
+
+    LogSchenkerStaffGeometry("P-after-schenker-barline-move", m_doc, staff);
+    this->SetEditInfo();
+    m_editInfo.import("uuid", barLine->GetID());
     m_editInfo.import("status", "OK");
     return true;
 }
