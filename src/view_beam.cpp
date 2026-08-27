@@ -337,8 +337,10 @@ void View::DrawBeamSegment(
     // Draw the beam full bar
 
     // Adjust the x position of the first and last element for taking into account the stem width
-    beamElementCoords->at(0)->m_x -= (m_doc->GetDrawingStemWidth(staff->m_drawingStaffSize)) / 2;
-    beamElementCoords->at(last)->m_x += (m_doc->GetDrawingStemWidth(staff->m_drawingStaffSize)) / 2;
+    const int stemWidth = m_doc->GetDrawingStemWidth(staff->m_drawingStaffSize);
+    const int halfStem = stemWidth / 2;
+    beamElementCoords->at(0)->m_x -= halfStem;
+    beamElementCoords->at(last)->m_x += halfStem;
 
     // Shift direction
     shiftY = (beamInterface->m_drawingPlace == BEAMPLACE_below) ? 1.0 : -1.0;

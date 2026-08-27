@@ -13,6 +13,7 @@
 #include <climits>
 #include <cmath>
 #include <exception>
+#include <limits>
 #include <locale>
 #include <set>
 #include <sstream>
@@ -349,6 +350,9 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
     else if ((action == "schenkerBeamHide") && json.has<jsonxx::Object>("param")) {
         skipSetFocus = this->IsSchenkerBeamHideAction(json.get<jsonxx::Object>("param"));
     }
+    else if ((action == "schenkerBeamPolishVertex") && json.has<jsonxx::Object>("param")) {
+        skipSetFocus = this->IsSchenkerBeamPolishVertexAction(json.get<jsonxx::Object>("param"));
+    }
     else if ((action == "schenkerNoteMove") && json.has<jsonxx::Object>("param")) {
         skipSetFocus = this->IsSchenkerNoteMoveAction(json.get<jsonxx::Object>("param"));
     }
@@ -542,6 +546,16 @@ bool EditorToolkitShared::ParseEditorAction(const std::string &json_editorAction
             return this->HideSchenkerBeamSegment(elementId, fromX, toX);
         }
         LogWarning("Could not parse the schenkerBeamHide action");
+    }
+    else if (action == "schenkerBeamPolishVertex") {
+        std::string elementId;
+        double x = 0.0;
+        std::string noteId;
+        if (this->ParseSchenkerBeamPolishVertexAction(json.get<jsonxx::Object>("param"), elementId, x, noteId)) {
+            this->PrepareUndo();
+            return this->PolishSchenkerBeamVertex(elementId, x, noteId);
+        }
+        LogWarning("Could not parse the schenkerBeamPolishVertex action");
     }
     else if (action == "schenkerNoteMove") {
         std::string elementId;
@@ -933,6 +947,43 @@ bool EditorToolkitShared::IsSchenkerBeamHideAction(const jsonxx::Object &param)
     return IsSchenkerBeamElement(dynamic_cast<Beam *>(element));
 }
 
+bool EditorToolkitShared::ParseSchenkerBeamPolishVertexAction(
+    jsonxx::Object param, std::string &elementId, double &x, std::string &noteId)
+{
+    noteId.clear();
+    if (!param.has<jsonxx::String>("elementId")) return false;
+    elementId = param.get<jsonxx::String>("elementId");
+    if (elementId.empty()) return false;
+    if (param.has<jsonxx::Number>("x")) {
+        x = param.get<jsonxx::Number>("x");
+    }
+    else if (param.has<jsonxx::String>("x")) {
+        try {
+            x = std::stod(param.get<jsonxx::String>("x"));
+        }
+        catch (const std::exception &) {
+            return false;
+        }
+    }
+    else {
+        return false;
+    }
+    if (param.has<jsonxx::String>("noteId")) {
+        noteId = param.get<jsonxx::String>("noteId");
+    }
+    return true;
+}
+
+bool EditorToolkitShared::IsSchenkerBeamPolishVertexAction(const jsonxx::Object &param)
+{
+    std::string elementId;
+    double x = 0.0;
+    std::string noteId;
+    if (!this->ParseSchenkerBeamPolishVertexAction(param, elementId, x, noteId)) return false;
+    Object *element = this->GetElement(elementId);
+    return IsSchenkerBeamElement(dynamic_cast<Beam *>(element));
+}
+
 bool EditorToolkitShared::ParseSchenkerNoteMoveAction(
     jsonxx::Object param, std::string &elementId, int &loc, double &schenkerX)
 {
@@ -1162,6 +1213,9 @@ bool EditorToolkitShared::IsSchenkerOverlayChain(const jsonxx::Array &actions)
         }
         else if (stepAction == "schenkerBeamHide") {
             if (!this->IsSchenkerBeamHideAction(stepParam)) return false;
+        }
+        else if (stepAction == "schenkerBeamPolishVertex") {
+            if (!this->IsSchenkerBeamPolishVertexAction(stepParam)) return false;
         }
         else if (stepAction == "schenkerNoteMove") {
             if (!this->IsSchenkerNoteMoveAction(stepParam)) return false;
@@ -1893,6 +1947,338 @@ bool EditorToolkitShared::HideSchenkerBeamSegment(
 
     Staff *staff = vrv_cast<Staff *>(beam->GetFirstAncestor(STAFF));
     LogSchenkerStaffGeometry("Q-after-schenker-beam-hide", m_doc, staff);
+    this->SetEditInfo();
+    m_editInfo.import("uuid", beam->GetID());
+    m_editInfo.import("status", "OK");
+    return true;
+}
+
+namespace {
+
+double RoundGraphicalX(double x)
+{
+    return std::lround(x * 100.0) / 100.0;
+}
+
+double GetSchenkerNoteGraphicalX(const Note *note, const Doc *doc)
+{
+    if (!note) return 0.0;
+    for (const auto &pair : note->m_unsupported) {
+        if (pair.first == "schenker:x") {
+            try {
+                return std::stod(pair.second);
+            }
+            catch (const std::exception &) {
+                break;
+            }
+        }
+    }
+    if (!note->HasDrawingFreeX()) return 0.0;
+    double ppu = 1.0;
+    if (doc) {
+        if (const Page *page = doc->GetDrawingPage()) {
+            ppu = page->GetPPUFactor();
+            if (ppu == 0.0) ppu = 1.0;
+        }
+    }
+    return static_cast<double>(note->GetDrawingFreeX()) * ppu / static_cast<double>(DEFINITION_FACTOR);
+}
+
+/** Stem attachment X in graphical space (where the Schenker beam meets the stem, not notehead center). */
+double GetSchenkerBeamNoteStemGraphicalX(Beam *beam, Note *note, const Doc *doc)
+{
+    if (!beam || !note || !doc) return 0.0;
+    Staff *staff = vrv_cast<Staff *>(beam->GetFirstAncestor(STAFF));
+    const data_BEAMPLACE place = ResolveSchenkerBeamPlace(beam, const_cast<Doc *>(doc), staff);
+    const data_STEMDIRECTION stemDir = (place == BEAMPLACE_above) ? STEMDIRECTION_up : STEMDIRECTION_down;
+    return RoundGraphicalX(GetSchenkerBeamStemGraphicalX(note, doc, staff, stemDir, beam->m_cueSize));
+}
+
+/** Half stem width in graphical space (matches DrawBeamSegment outer-stem extension). */
+double GetSchenkerBeamHalfStemGraphical(const Doc *doc, const Staff *staff)
+{
+    if (!doc || !staff) return 0.0;
+    const int halfStem = doc->GetDrawingStemWidth(staff->m_drawingStaffSize) / 2;
+    double ppu = 1.0;
+    if (const Page *page = doc->GetDrawingPage()) {
+        ppu = page->GetPPUFactor();
+        if (ppu == 0.0) ppu = 1.0;
+    }
+    return static_cast<double>(halfStem) * ppu / static_cast<double>(DEFINITION_FACTOR);
+}
+
+std::vector<std::pair<double, double>> ParseBeamHideGraphicalIntervals(const Beam *beam)
+{
+    std::vector<std::pair<double, double>> intervals;
+    if (!beam) return intervals;
+    std::string raw;
+    for (const auto &pair : beam->m_unsupported) {
+        if (pair.first == "schenker:beam.hide") {
+            raw = pair.second;
+            break;
+        }
+    }
+    if (raw.empty()) return intervals;
+
+    std::stringstream ss(raw);
+    std::string token;
+    while (std::getline(ss, token, ';')) {
+        if (token.empty()) continue;
+        const size_t colon = token.find(':');
+        if (colon == std::string::npos) continue;
+        try {
+            double a = std::stod(token.substr(0, colon));
+            double b = std::stod(token.substr(colon + 1));
+            if (a > b) std::swap(a, b);
+            a = RoundGraphicalX(a);
+            b = RoundGraphicalX(b);
+            if (b > a) intervals.emplace_back(a, b);
+        }
+        catch (const std::exception &) {
+            continue;
+        }
+    }
+    std::sort(intervals.begin(), intervals.end());
+    return intervals;
+}
+
+std::string SerializeBeamHideGraphicalIntervals(const std::vector<std::pair<double, double>> &intervals)
+{
+    std::string out;
+    for (const auto &seg : intervals) {
+        if (seg.second - seg.first < 0.01) continue;
+        if (!out.empty()) out += ";";
+        const double a = RoundGraphicalX(seg.first);
+        const double b = RoundGraphicalX(seg.second);
+        out += std::to_string(a) + ":" + std::to_string(b);
+    }
+    return out;
+}
+
+void SetBeamHideGraphicalAttr(Beam *beam, const std::string &value)
+{
+    if (!beam) return;
+    for (auto &pair : beam->m_unsupported) {
+        if (pair.first == "schenker:beam.hide") {
+            pair.second = value;
+            return;
+        }
+    }
+    if (!value.empty()) {
+        beam->m_unsupported.push_back(std::make_pair("schenker:beam.hide", value));
+    }
+}
+
+void AddPolishedStemX(Beam *beam, double stemX)
+{
+    if (!beam) return;
+    stemX = RoundGraphicalX(stemX);
+    std::string raw;
+    for (const auto &pair : beam->m_unsupported) {
+        if (pair.first == "schenker:beam.polish") {
+            raw = pair.second;
+            break;
+        }
+    }
+    std::stringstream ss(raw);
+    std::string token;
+    while (std::getline(ss, token, ';')) {
+        if (token.empty()) continue;
+        try {
+            if (std::fabs(std::stod(token) - stemX) < 0.01) return;
+        }
+        catch (const std::exception &) {
+            continue;
+        }
+    }
+    if (!raw.empty()) raw += ";";
+    raw += std::to_string(stemX);
+    for (auto &pair : beam->m_unsupported) {
+        if (pair.first == "schenker:beam.polish") {
+            pair.second = raw;
+            return;
+        }
+    }
+    beam->m_unsupported.push_back(std::make_pair("schenker:beam.polish", raw));
+}
+
+std::vector<Note *> SortedSchenkerBeamNotes(Beam *beam, const Doc *doc)
+{
+    std::vector<Note *> notes;
+    if (!beam) return notes;
+    ListOfObjects noteObjects = beam->FindAllDescendantsByType(NOTE);
+    for (Object *object : noteObjects) {
+        Note *note = vrv_cast<Note *>(object);
+        if (!note) continue;
+        notes.push_back(note);
+    }
+    std::stable_sort(notes.begin(), notes.end(), [beam, doc](Note *a, Note *b) {
+        return GetSchenkerBeamNoteStemGraphicalX(beam, a, doc) < GetSchenkerBeamNoteStemGraphicalX(beam, b, doc);
+    });
+    return notes;
+}
+
+} // namespace
+
+bool EditorToolkitShared::PolishSchenkerBeamVertex(
+    const std::string &elementId, double x, const std::string &noteId)
+{
+    Object *element = this->GetElement(elementId);
+    Beam *beam = dynamic_cast<Beam *>(element);
+    if (!IsSchenkerBeamElement(beam)) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Only Schenker beams can polish a vertex.");
+        return false;
+    }
+
+    auto intervals = ParseBeamHideGraphicalIntervals(beam);
+    if (intervals.empty()) {
+        this->SetEditInfo();
+        m_editInfo.import("uuid", beam->GetID());
+        m_editInfo.import("status", "OK");
+        return true;
+    }
+
+    const std::vector<Note *> notes = SortedSchenkerBeamNotes(beam, m_doc);
+    if (notes.size() < 3) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "Polish vertex needs an inner stem.");
+        return false;
+    }
+
+    Note *targetNote = NULL;
+    if (!noteId.empty()) {
+        Object *clicked = this->GetElement(noteId);
+        targetNote = vrv_cast<Note *>(clicked);
+        if (!targetNote || targetNote->GetFirstAncestor(BEAM) != beam) {
+            m_editInfo.import("status", "FAILURE");
+            m_editInfo.import("message", "Polish click must target a note in the selected beam.");
+            return false;
+        }
+    }
+
+    double stemCenterX = 0.0;
+    if (targetNote) {
+        const auto first = notes.front();
+        const auto last = notes.back();
+        if (targetNote == first || targetNote == last) {
+            m_editInfo.import("status", "FAILURE");
+            m_editInfo.import("message", "Polish vertex must target an inner stem.");
+            return false;
+        }
+        stemCenterX = GetSchenkerBeamNoteStemGraphicalX(beam, targetNote, m_doc);
+    }
+    else {
+        double bestDist = std::numeric_limits<double>::infinity();
+        for (size_t i = 1; i + 1 < notes.size(); ++i) {
+            const double nx = GetSchenkerBeamNoteStemGraphicalX(beam, notes[i], m_doc);
+            const double d = std::fabs(nx - x);
+            if (d < bestDist) {
+                bestDist = d;
+                stemCenterX = nx;
+            }
+        }
+    }
+
+    Staff *staff = vrv_cast<Staff *>(beam->GetFirstAncestor(STAFF));
+    const double halfStem = GetSchenkerBeamHalfStemGraphical(m_doc, staff);
+    const double stemLeft = RoundGraphicalX(stemCenterX - halfStem);
+    const double stemRight = RoundGraphicalX(stemCenterX + halfStem);
+
+    // Extend hide to the stem outer edge on the side where a visible stub remains (do not shorten visible).
+    // DrawBeamSegment extends the full bar by halfStem at outer stems; inner cuts should match those edges.
+    static constexpr double MAX_STUB = 80.0;
+    size_t bestInterval = 0;
+    enum StubMode { EXTEND_END = 0, EXTEND_START = 1, TRIM_START = 2, TRIM_END = 3 };
+    StubMode bestMode = EXTEND_END;
+    double bestGap = std::numeric_limits<double>::infinity();
+
+    for (size_t i = 0; i < intervals.size(); ++i) {
+        const auto &seg = intervals[i];
+        // Hide ends before stem: visible stub in (seg.second, stemLeft).
+        if (seg.second < stemLeft - 0.01) {
+            const double gap = stemLeft - seg.second;
+            if (gap <= MAX_STUB && gap < bestGap) {
+                bestGap = gap;
+                bestInterval = i;
+                bestMode = EXTEND_END;
+            }
+        }
+        // Hide starts after stem: visible stub in (stemRight, seg.first).
+        if (seg.first > stemRight + 0.01) {
+            const double gap = seg.first - stemRight;
+            if (gap <= MAX_STUB && gap < bestGap) {
+                bestGap = gap;
+                bestInterval = i;
+                bestMode = EXTEND_START;
+            }
+        }
+        // Hide spans stem: trim to outer edge from the clicked side.
+        if (seg.first < stemRight - 0.01 && seg.second > stemLeft + 0.01) {
+            if (x <= stemCenterX && seg.first < stemLeft - 0.01) {
+                const double gap = stemLeft - seg.first;
+                if (gap <= MAX_STUB && gap < bestGap) {
+                    bestGap = gap;
+                    bestInterval = i;
+                    bestMode = TRIM_START;
+                }
+            }
+            else if (x > stemCenterX && seg.second > stemRight + 0.01) {
+                const double gap = seg.second - stemRight;
+                if (gap <= MAX_STUB && gap < bestGap) {
+                    bestGap = gap;
+                    bestInterval = i;
+                    bestMode = TRIM_END;
+                }
+            }
+        }
+    }
+
+    if (!std::isfinite(bestGap)) {
+        m_editInfo.import("status", "FAILURE");
+        m_editInfo.import("message", "No hide cut stub found near this stem to polish.");
+        return false;
+    }
+
+    auto &seg = intervals[bestInterval];
+    switch (bestMode) {
+        case EXTEND_END: seg.second = stemLeft; break;
+        case EXTEND_START: seg.first = stemRight; break;
+        case TRIM_START: seg.first = stemLeft; break;
+        case TRIM_END: seg.second = stemRight; break;
+    }
+    if (seg.first > seg.second) {
+        std::swap(seg.first, seg.second);
+    }
+
+    std::vector<std::pair<double, double>> cleaned;
+    for (auto piece : intervals) {
+        if (piece.first > piece.second) std::swap(piece.first, piece.second);
+        piece.first = RoundGraphicalX(piece.first);
+        piece.second = RoundGraphicalX(piece.second);
+        if (piece.second - piece.first >= 0.01) cleaned.push_back(piece);
+    }
+    std::sort(cleaned.begin(), cleaned.end());
+
+    std::vector<std::pair<double, double>> merged;
+    for (const auto &piece : cleaned) {
+        if (merged.empty() || piece.first > merged.back().second) {
+            merged.push_back(piece);
+        }
+        else {
+            merged.back().second = std::max(merged.back().second, piece.second);
+        }
+    }
+
+    SetBeamHideGraphicalAttr(beam, SerializeBeamHideGraphicalIntervals(merged));
+    AddPolishedStemX(beam, stemCenterX);
+
+    if (Page *page = m_doc->GetDrawingPage()) {
+        page->DeprecateLayout();
+    }
+
+    Staff *staffAfter = vrv_cast<Staff *>(beam->GetFirstAncestor(STAFF));
+    LogSchenkerStaffGeometry("Q-after-schenker-beam-polish", m_doc, staffAfter);
     this->SetEditInfo();
     m_editInfo.import("uuid", beam->GetID());
     m_editInfo.import("status", "OK");

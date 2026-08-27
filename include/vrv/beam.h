@@ -462,6 +462,18 @@ public:
     Stem *m_stem; // a pointer to the stem in order to avoid to have to re-cast it
 };
 
+class Note;
+class Doc;
+class Staff;
+
+/** Relative offset from note @GetDrawingX() to Schenker beam stem attachment (matches BeamElementCoord::m_x). */
+Point GetSchenkerStemAttachmentRel(const Note *note, const Doc *doc, const Staff *staff,
+    const StemmedDrawingInterface *stemmedInterface, data_STEMDIRECTION stemDir, bool cueSize);
+
+/** Stem attachment X in graphical/page units (schenker:x space). */
+double GetSchenkerBeamStemGraphicalX(const Note *note, const Doc *doc, const Staff *staff,
+    data_STEMDIRECTION stemDir, bool cueSize);
+
 } // namespace vrv
 
 #endif

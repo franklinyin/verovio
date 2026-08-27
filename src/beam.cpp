@@ -29,6 +29,7 @@
 #include "rest.h"
 #include "smufl.h"
 #include "space.h"
+#include "page.h"
 #include "staff.h"
 #include "stem.h"
 #include "tabdursym.h"
@@ -39,11 +40,9 @@
 
 namespace vrv {
 
-namespace {
-
 // schenker:x is the visual center; stem attachment matches CalcStemFunctor::VisitStem.
 Point GetSchenkerStemAttachmentRel(const Note *note, const Doc *doc, const Staff *staff,
-    StemmedDrawingInterface *stemmedInterface, data_STEMDIRECTION stemDir, bool cueSize)
+    const StemmedDrawingInterface *stemmedInterface, data_STEMDIRECTION stemDir, bool cueSize)
 {
     assert(note);
     assert(doc);
@@ -64,7 +63,26 @@ Point GetSchenkerStemAttachmentRel(const Note *note, const Doc *doc, const Staff
     return p;
 }
 
-} // namespace
+double GetSchenkerBeamStemGraphicalX(
+    const Note *note, const Doc *doc, const Staff *staff, data_STEMDIRECTION stemDir, bool cueSize)
+{
+    if (!note || !doc || !staff) return 0.0;
+
+    double ppu = 1.0;
+    if (const Page *page = doc->GetDrawingPage()) {
+        ppu = page->GetPPUFactor();
+        if (ppu == 0.0) ppu = 1.0;
+    }
+
+    const StemmedDrawingInterface *stemInterface = note->GetStemmedDrawingInterface();
+    if (!stemInterface) {
+        return static_cast<double>(note->GetDrawingX()) * ppu / static_cast<double>(DEFINITION_FACTOR);
+    }
+
+    const Point p = GetSchenkerStemAttachmentRel(note, doc, staff, stemInterface, stemDir, cueSize);
+    const int drawingX = note->GetDrawingX() + p.x;
+    return static_cast<double>(drawingX) * ppu / static_cast<double>(DEFINITION_FACTOR);
+}
 
 //----------------------------------------------------------------------------
 // BeamSegment
