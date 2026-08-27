@@ -132,7 +132,15 @@ int Clef::GetClefLocOffset() const
 char32_t Clef::GetClefGlyph(const data_NOTATIONTYPE notationtype) const
 {
     const Resources *resources = this->GetDocResources();
-    const bool clefChange = (this->GetAlignment() && (this->GetAlignment()->GetType() == ALIGNMENT_CLEF));
+    // Mid-staff CMN clef-changes use small glyphs (E07A/E07C). On Neon
+    // neon-neume-line / transcription staves the layer <clef> is the primary
+    // staff clef (often with @facs), not a courtesy change — keep full size.
+    bool clefChange = (this->GetAlignment() && (this->GetAlignment()->GetType() == ALIGNMENT_CLEF));
+    if (clefChange) {
+        if (const Doc *doc = vrv_cast<const Doc *>(this->GetFirstAncestor(DOC))) {
+            if (doc->IsNeumeLines() || doc->IsTranscription()) clefChange = false;
+        }
+    }
     if (!resources) return 0;
 
     // If there is glyph.num, prioritize it
