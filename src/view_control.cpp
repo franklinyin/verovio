@@ -11,6 +11,7 @@
 
 #include <cassert>
 #include <sstream>
+#include <vector>
 
 //----------------------------------------------------------------------------
 
@@ -68,6 +69,61 @@ namespace vrv {
 
 // Schenker Dir labels use this fraction of the lyric point size.
 static constexpr double SCHENKER_LABEL_FONT_SCALE = 0.75;
+static constexpr double SCHENKER_CARET_SCALE = 1.2;
+static constexpr int SCHENKER_CARET_LIFT_UNITS = 28; // tiny lift in 2048 font units
+
+// Flatten Dir text children (including legacy <rend> wrappers) to one string.
+std::u32string FlattenDirLabelText(Dir *dir)
+{
+    std::u32string out;
+    if (!dir) return out;
+    for (Object *child : dir->GetChildren()) {
+        if (child->Is(TEXT)) {
+            Text *text = vrv_cast<Text *>(child);
+            if (text) out += text->GetText();
+        }
+        else if (child->Is(REND)) {
+            for (Object *grand : child->GetChildren()) {
+                if (!grand->Is(TEXT)) continue;
+                Text *text = vrv_cast<Text *>(grand);
+                if (text) out += text->GetText();
+            }
+        }
+    }
+    return out;
+}
+
+// Split TeX-caret storage (base + U+0302) into plain text + caret char indices.
+void ParseSchenkerCarets(const std::u32string &input, std::u32string &plain, std::vector<int> &caretIndices)
+{
+    plain.clear();
+    caretIndices.clear();
+    for (size_t i = 0; i < input.size(); ++i) {
+        if (input[i] == U'\u0302') continue;
+        plain.push_back(input[i]);
+        if (i + 1 < input.size() && input[i + 1] == U'\u0302') {
+            caretIndices.push_back(static_cast<int>(plain.size() - 1));
+            ++i;
+        }
+    }
+}
+
+int ScaleTextFontUnits(int units, int pointSize, int unitsPerEm = 2048)
+{
+    return static_cast<int>(std::lround(static_cast<double>(units) * pointSize / static_cast<double>(unitsPerEm)));
+}
+
+// Bottom of glyph ink relative to the text baseline (logical y-up), using the
+// same scaling as DeviceContext::AddGlyphToTextExtend (bbox coords are ×10).
+int GetTextGlyphBBoxBottom(const Resources *resources, char32_t code, int pointSize)
+{
+    if (!resources) return 0;
+    const Glyph *glyph = resources->GetTextGlyph(code);
+    if (!glyph) return 0;
+    int x, y, w, h;
+    glyph->GetBoundingBox(x, y, w, h);
+    return static_cast<int>(std::ceil(static_cast<double>(y) * pointSize / static_cast<double>(glyph->GetUnitsPerEm())));
+}
 
 //----------------------------------------------------------------------------
 // View - FloatingObject - ControlElement
@@ -1784,12 +1840,18 @@ void View::DrawControlElementText(DeviceContext *dc, ControlElement *element, Me
     const data_STAFFREL place = interfaceTextDir->GetPlace();
 
     FontInfo dirTxt;
-    if (!dc->UseGlobalStyling()) {
+    // Schenker labels must use the toolkit text font face explicitly. With
+    // fontTextLiberation this is the embedded Liberation WOFF (same file +
+    // HarfBuzz on every Chrome). System Times made combining marks and U+02C6
+    // placement OS-dependent.
+    if (schenkerLabel || !dc->UseGlobalStyling()) {
         dirTxt.SetFaceName(m_doc->GetResources().GetTextFont());
-        dirTxt.SetStyle(schenkerLabel ? FONTSTYLE_normal : FONTSTYLE_italic);
     }
-    else if (schenkerLabel) {
+    if (schenkerLabel) {
         dirTxt.SetStyle(FONTSTYLE_normal);
+    }
+    else if (!dc->UseGlobalStyling()) {
+        dirTxt.SetStyle(FONTSTYLE_italic);
     }
 
     const int lineCount = interfaceTextDir->GetNumberOfLines(element);
@@ -1860,12 +1922,79 @@ void View::DrawControlElementText(DeviceContext *dc, ControlElement *element, Me
 
         dc->SetFont(&dirTxt);
 
-        dc->StartText(this->ToDeviceContextX(params.m_x - xAdjust), this->ToDeviceContextY(params.m_y), staffAlignment);
-        if (SvgDeviceContext *svgDc = dynamic_cast<SvgDeviceContext *>(dc)) {
-            svgDc->SetCurrentNodeFontSize(params.m_pointSize);
+        // U+0302 via browser text shaping is OS-dependent. We emulate the Mac
+        // combining-hat seat: draw the digit, then place a spacing circumflex
+        // (U+02C6) whose bbox bottom sits just above the digit top, using the
+        // same font bbox tables Verovio uses for all other text layout.
+        static const std::u32string kHat = U"\u02C6";
+        std::u32string plain;
+        std::vector<int> caretIndices;
+        if (schenkerLabel && element->Is(DIR)) {
+            ParseSchenkerCarets(FlattenDirLabelText(vrv_cast<Dir *>(element)), plain, caretIndices);
         }
-        DrawTextChildren(dc, element, params);
-        dc->EndText();
+
+        if (schenkerLabel && !caretIndices.empty()) {
+            m_doc->GetResources().SelectTextFont(dirTxt.GetWeight(), dirTxt.GetStyle());
+
+            TextExtend plainExt;
+            dc->GetTextExtent(plain, &plainExt, false);
+
+            dc->StartText(
+                this->ToDeviceContextX(params.m_x - xAdjust), this->ToDeviceContextY(params.m_y), staffAlignment);
+            if (SvgDeviceContext *svgDc = dynamic_cast<SvgDeviceContext *>(dc)) {
+                svgDc->SetCurrentNodeFontSize(params.m_pointSize);
+            }
+            this->DrawTextString(dc, plain, params);
+            dc->EndText();
+
+            int leftX = params.m_x - xAdjust;
+            if (staffAlignment == HORIZONTALALIGNMENT_center) {
+                leftX -= plainExt.m_width / 2;
+            }
+            else if (staffAlignment == HORIZONTALALIGNMENT_right) {
+                leftX -= plainExt.m_width;
+            }
+
+            const int hatPointSize = std::max(1, static_cast<int>(params.m_pointSize * SCHENKER_CARET_SCALE + 0.5));
+            const int hatBBoxBottom
+                = GetTextGlyphBBoxBottom(&m_doc->GetResources(), kHat.front(), hatPointSize);
+            const int gap = std::max(1, ScaleTextFontUnits(48, params.m_pointSize));
+            const int lift = ScaleTextFontUnits(SCHENKER_CARET_LIFT_UNITS, params.m_pointSize);
+
+            FontInfo hatTxt = dirTxt;
+            hatTxt.SetPointSize(hatPointSize);
+
+            int adv = 0;
+            size_t caretPos = 0;
+            for (int i = 0; i < static_cast<int>(plain.size()) && caretPos < caretIndices.size(); ++i) {
+                TextExtend chExt;
+                dc->GetTextExtent(std::u32string(1, plain[i]), &chExt, false);
+                if (caretIndices[caretPos] == i) {
+                    const int cx = leftX + adv + chExt.m_width / 2;
+                    const int hatY = params.m_y + chExt.m_ascent + gap - hatBBoxBottom + lift;
+                    dc->SetFont(&hatTxt);
+                    dc->StartText(
+                        this->ToDeviceContextX(cx), this->ToDeviceContextY(hatY), HORIZONTALALIGNMENT_center);
+                    if (SvgDeviceContext *svgDc = dynamic_cast<SvgDeviceContext *>(dc)) {
+                        svgDc->SetCurrentNodeFontSize(hatPointSize);
+                    }
+                    this->DrawTextString(dc, kHat, params);
+                    dc->EndText();
+                    dc->SetFont(&dirTxt);
+                    ++caretPos;
+                }
+                adv += chExt.m_width;
+            }
+        }
+        else {
+            dc->StartText(
+                this->ToDeviceContextX(params.m_x - xAdjust), this->ToDeviceContextY(params.m_y), staffAlignment);
+            if (SvgDeviceContext *svgDc = dynamic_cast<SvgDeviceContext *>(dc)) {
+                svgDc->SetCurrentNodeFontSize(params.m_pointSize);
+            }
+            DrawTextChildren(dc, element, params);
+            dc->EndText();
+        }
 
         dc->ResetFont();
 
